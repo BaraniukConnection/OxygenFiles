@@ -64,14 +64,14 @@ Item {
 
     Rectangle {
         anchors.fill: parent
-        radius: theme.radiusL
-        color: theme.surfaceContainerLow
+        radius: theme.radiusXl
+        color: root.isMounted ? theme.surfaceContainer : theme.surfaceContainerLow
         Behavior on color { enabled: theme.animate; ColorAnimation { duration: theme.durationFast } }
     }
 
     Rectangle {
         anchors.fill: parent
-        radius: theme.radiusL
+        radius: theme.radiusXl
         color: cardMouse.containsMouse ? theme.hoverOverlay : "transparent"
         Behavior on color { enabled: theme.animate; ColorAnimation { duration: 100 } }
     }
@@ -110,7 +110,7 @@ Item {
             spacing: 3
 
             Text {
-                text: (root.drive && root.drive.name) ? root.drive.name : ""
+                text: (root.drive && root.drive.name) ? theme.resolveRustMessage(root.drive.name) : ""
                 color: theme.textMain
                 font.pixelSize: theme.fs(15)
                 font.bold: true

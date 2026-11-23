@@ -4,19 +4,16 @@ import QtQuick.Layouts
 import app.loaf
 
 // PC Dashboard: hostname header with device type icon, plus reorderable /
-// customizable sections (places, disks, frequent, internal storage summary +
-// drives, external drives). Disks lists every drive as a DiskCard to pick one
-// to open; the internal/external storage sections start hidden. Drive rows are rendered with the shared DriveCard; all
+// customizable sections (places, frequent, internal storage summary + drives,
+// external drives). Drive rows are rendered with the shared DriveCard; all
 // controls come from the shared component library (SectionHeader, LoafButton,
-// LoafCard, UsageBar, LoafMenu, LoafTextPrompt).
+// LoafShape, UsageBar, LoafMenu, LoafTextPrompt).
 Item {
     id: pcView
 
-    // ---- customization model -----------------------------------------------
+    readonly property var knownSections: ["places", "disks", "frequent", "internal", "external", "remotes", "network"]
 
-    readonly property var knownSections: ["places", "disks", "frequent", "internal", "external"]
-
-    property var sectionOrder: ["places", "disks", "frequent", "internal", "external"]
+    property var sectionOrder: ["places", "disks", "frequent", "internal", "external", "remotes", "network"]
     property var sectionConfig: pcView.defaultConfig()
     property bool isCustomizing: false
 
@@ -31,10 +28,13 @@ Item {
     function defaultConfig() {
         return {
             "places": { visible: true, view: "grid" },
+            // Oxygen Files: Disks lists every drive as a DiskCard, so the storage sections start hidden.
             "disks": { visible: true, view: "cards" },
             "frequent": { visible: true, view: "carousel" },
             "internal": { visible: false, view: "cards" },
-            "external": { visible: false, view: "cards" }
+            "external": { visible: false, view: "cards" },
+            "remotes": { visible: true, view: "grid" },
+            "network": { visible: true, view: "grid" }
         };
     }
 
@@ -90,6 +90,10 @@ Item {
             return pcView.internalDrives.length > 0;
         if (secKey === "disks")
             return pcView.allDrives.length > 0;
+        if (secKey === "remotes")
+            return pcView.remoteItems.length > 0;
+        if (secKey === "network")
+            return theme.smbAutoDiscovery && pcView.discoveredServers.length > 0;
         return true;
     }
 
@@ -131,8 +135,6 @@ Item {
         pcView.saveCustomization();
     }
 
-    // ---- drive data --------------------------------------------------------
-
     readonly property var allDrives: {
         try {
             return JSON.parse(core.drives_json || "[]");
@@ -152,6 +154,80 @@ Item {
         } catch (e) {
             return [];
         }
+    }
+    readonly property var discoveredServers: {
+        try {
+            return JSON.parse(core.smb_discovered_json || "[]").filter(function (d) {
+                return d.ignored !== true;
+            });
+        } catch (e) {
+            return [];
+        }
+    }
+    readonly property var remoteItems: {
+        var out = [];
+        try {
+            var profiles = JSON.parse(core.network_profiles_json || "[]");
+            for (var i = 0; i < profiles.length; ++i) {
+                var p = profiles[i];
+                out.push({
+                    id: p.id,
+                    kind: "profile",
+                    protocol: p.protocol || "smb",
+                    name: p.label || p.name || p.server || qsTr("Network Drive"),
+                    server: p.server || "",
+                    share: p.share || "",
+                    username: p.username || "",
+                    domain: p.domain || "",
+                    port: p.port || 0,
+                    ssl: p.ssl !== false,
+                    connected: p.connected === true,
+                    path: p.path || "",
+                    icon: p.icon || (p.protocol === "webdav" ? "globe" : "network")
+                });
+            }
+        } catch (e) {}
+        try {
+            var places = JSON.parse(core.places_json || "[]");
+            for (var j = 0; j < places.length; ++j) {
+                var pl = places[j];
+                if (pl.kind !== "network" || pl.profile_id)
+                    continue;
+                out.push({
+                    id: pl.id,
+                    kind: "bookmark",
+                    protocol: "",
+                    name: pl.name || pl.path || qsTr("Remote URL"),
+                    server: "",
+                    share: "",
+                    username: "",
+                    domain: "",
+                    port: 0,
+                    ssl: false,
+                    connected: false,
+                    path: pl.path || "",
+                    icon: pl.icon || "globe"
+                });
+            }
+        } catch (e) {}
+        return out;
+    }
+    readonly property int connectedRemotes: pcView.remoteItems.filter(function (r) {
+        return r.connected === true;
+    }).length
+
+    function serverSubtitle(entry) {
+        var parts = [];
+        if (entry.server && entry.server !== entry.name)
+            parts.push(entry.server);
+        if (entry.address)
+            parts.push(entry.address);
+        return parts.join("  ·  ");
+    }
+
+    function addDiscoveredShare(server, share) {
+        if (typeof core !== "undefined" && core && share)
+            core.add_smb_discovered(server, share);
     }
 
     readonly property real totalInternalBytes: pcView.internalDrives.reduce(function (acc, d) {
@@ -178,8 +254,18 @@ Item {
             return (b / 1024).toFixed(0) + " KB";
         return "0 B";
     }
+    // Places cycle through expressive shapes and the three tonal containers.
+    readonly property var placeShapes: ["cookie9", "clover4", "sunny", "cookie6", "flower", "burst", "clover8", "cookie4", "cookie12"]
+    function placeShape(i) {
+        return pcView.placeShapes[i % pcView.placeShapes.length];
+    }
+    function placeContainer(i) {
+        return [theme.primaryContainer, theme.secondaryContainer, theme.tertiaryContainer][i % 3];
+    }
+    function placeOnContainer(i) {
+        return [theme.primaryContainerFg, theme.secondaryContainerFg, theme.textMain][i % 3];
+    }
 
-    // Responsive column count: reflows to the available width.
     function columnCount(minCellWidth) {
         return Math.max(1, Math.floor(pcFlick.width / minCellWidth));
     }
@@ -192,30 +278,16 @@ Item {
         return d.is_mounted === true;
     }
 
-    // ---- drive actions -----------------------------------------------------
-
     function openDrive(d) {
-        if (pcView.isMounted(d)) {
-            window.showFiles();
-            engine.set_path(d.mount_point);
-        } else {
-            pcView.mountDrive(d);
-        }
+        window.openDrive(d, false);
     }
 
     function mountDrive(d) {
-        if (!d)
-            return;
-        if (d.is_locked)
-            core.unlock_drive(d.device, "", false); // keyring first, then asks
-        else
-            core.mount_drive(d.device);
+        window.mountDrive(d);
     }
 
     function unmountDrive(d) {
-        if (!d)
-            return;
-        core.unmount_drive(d.device);
+        window.unmountDrive(d);
     }
 
     // Folder shortcuts: the user's real (localized) folders, issue #21/#22.
@@ -234,31 +306,55 @@ Item {
         if (!d)
             return;
         pcView.renameDevice = d.device;
-        renamePrompt.initialText = d.name;
-        renamePrompt.label = d.name;
+        renamePrompt.initialText = theme.resolveRustMessage(d.name || "");
+        renamePrompt.label = theme.resolveRustMessage(d.name || "");
         renamePrompt.open();
+    }
+
+    function requestPcRename() {
+        pcNamePrompt.initialText = core.pc_name || core.hostname || qsTr("This PC");
+        pcNamePrompt.open();
+    }
+
+    function openPcMenu(px, py) {
+        pcMenu.model = [
+            {
+                "text": qsTr("Rename This PC…"),
+                "icon": "pencil-simple",
+                "action": function () { pcView.requestPcRename(); }
+            },
+            {
+                "text": qsTr("Reset to Hostname"),
+                "icon": "arrow-counter-clockwise",
+                "separatorBefore": true,
+                "enabled": core.pc_name.length > 0,
+                "action": function () { core.set_pc_custom_name(""); }
+            }
+        ];
+        pcMenu.openAt(px, py);
     }
 
     function driveMenuModel(d) {
         var mounted = pcView.isMounted(d);
         var external = d && d.is_external === true;
+        var isMtp = d && d.provider === "mtp";
         var items = [];
 
         items.push({
             "text": qsTr("Open"),
             "icon": "folder-open",
-            "enabled": mounted,
+            "enabled": mounted || isMtp,
             "action": function () { pcView.openDrive(d); }
         });
         if (!mounted) {
             items.push({
-                "text": qsTr("Mount"),
-                "icon": "download",
+                "text": isMtp ? qsTr("Browse") : qsTr("Mount"),
+                "icon": isMtp ? "plugs-connected" : "download",
                 "separatorBefore": true,
                 "action": function () { pcView.mountDrive(d); }
             });
         }
-        if (mounted) {
+        if (mounted && !isMtp) {
             items.push({
                 "text": qsTr("Unmount"),
                 "icon": "eject",
@@ -266,7 +362,7 @@ Item {
                 "action": function () { pcView.unmountDrive(d); }
             });
         }
-        if (external && d.disk) {
+        if (external && d.disk && !isMtp) {
             items.push({
                 "text": qsTr("Eject (Safely Remove)"),
                 "icon": "eject",
@@ -274,7 +370,7 @@ Item {
                 "action": function () { core.eject_drive(d.disk); }
             });
         }
-        if (d.is_encrypted && d.crypt_device) {
+        if (d.is_encrypted && d.crypt_device && !isMtp) {
             items.push({
                 "text": qsTr("Lock Encrypted Drive"),
                 "icon": "lock",
@@ -282,27 +378,20 @@ Item {
                 "action": function () { core.lock_drive(d.crypt_device); }
             });
         }
-        items.push({
-            "text": qsTr("Rename"),
-            "icon": "pencil-simple",
-            "separatorBefore": true,
-            "action": function () { pcView.requestRename(d); }
-        });
+        if (!isMtp) {
+            items.push({
+                "text": qsTr("Rename"),
+                "icon": "pencil-simple",
+                "separatorBefore": true,
+                "action": function () { pcView.requestRename(d); }
+            });
+        }
         items.push({
             "text": qsTr("Change Icon…"),
             "icon": "paint-brush",
+            "separatorBefore": isMtp,
             "action": function () { iconPicker.openFor(theme.driveIconKey(d)); }
         });
-        if (external) {
-            items.push({
-                "text": qsTr("Eject"),
-                "icon": "eject",
-                "danger": true,
-                "enabled": mounted,
-                "separatorBefore": true,
-                "action": function () { pcView.unmountDrive(d); }
-            });
-        }
         return items;
     }
 
@@ -310,6 +399,75 @@ Item {
         pcView.menuDrive = d;
         driveMenu.model = pcView.driveMenuModel(d);
         driveMenu.openAt(sceneX, sceneY);
+    }
+
+    function openRemote(r) {
+        if (!r)
+            return;
+        if (r.kind === "bookmark") {
+            if (r.path)
+                core.open_uri(r.path);
+            return;
+        }
+        if (r.connected && r.path) {
+            window.showFiles();
+            engine.set_path(r.path);
+            return;
+        }
+        core.connect_network(r.id, "", false);
+    }
+
+    function remoteMenuModel(r) {
+        var items = [];
+        if (!r)
+            return items;
+        if (r.kind === "bookmark") {
+            items.push({
+                "text": qsTr("Open"),
+                "icon": "folder-open",
+                "action": function () { pcView.openRemote(r); }
+            });
+            return items;
+        }
+        items.push({
+            "text": qsTr("Open"),
+            "icon": "folder-open",
+            "enabled": r.connected === true,
+            "action": function () { pcView.openRemote(r); }
+        });
+        if (!r.connected) {
+            items.push({
+                "text": qsTr("Connect"),
+                "icon": "plug",
+                "separatorBefore": true,
+                "action": function () { core.connect_network(r.id, "", false); }
+            });
+        } else {
+            items.push({
+                "text": qsTr("Disconnect"),
+                "icon": "plug-slash",
+                "separatorBefore": true,
+                "action": function () { core.disconnect_network(r.id); }
+            });
+        }
+        items.push({
+            "text": qsTr("Edit Remote…"),
+            "icon": "pencil-simple",
+            "separatorBefore": true,
+            "action": function () { window.openSmbEditor(r); }
+        });
+        items.push({
+            "text": qsTr("Remove Remote"),
+            "icon": "x",
+            "danger": true,
+            "action": function () { window.removeNetworkDrive(r.id, r.name); }
+        });
+        return items;
+    }
+
+    function openRemoteMenu(r, sceneX, sceneY) {
+        remoteMenu.model = pcView.remoteMenuModel(r);
+        remoteMenu.openAt(sceneX, sceneY);
     }
 
     Component.onCompleted: {
@@ -324,11 +482,6 @@ Item {
                 pcView.sectionConfig = pcView.normalizeConfig(JSON.parse(cfg));
         } catch (e) {}
     }
-
-    // =========================================================================
-    // LAYOUT
-    // =========================================================================
-
     Flickable {
         id: pcFlick
         anchors.fill: parent
@@ -341,47 +494,130 @@ Item {
             id: pcCol
             width: pcFlick.width
             spacing: 24
-
-            // ===== Unified Header: hostname & device type icon =====
+            // Hero: the device in a large expressive shape, a short storage
+            // summary and a few decorative shapes.
             RowLayout {
                 Layout.fillWidth: true
-                spacing: 12
+                Layout.topMargin: 4
+                spacing: 20
 
-                Rectangle {
-                    Layout.preferredWidth: 44
-                    Layout.preferredHeight: 44
-                    radius: 22
-                    color: theme.primaryContainer
+                Item {
+                    Layout.preferredWidth: 104
+                    Layout.preferredHeight: 104
+
+                    LoafShape {
+                        anchors.fill: parent
+                        shape: "cookie12"
+                        color: theme.primaryContainer
+                        rotation: heroMouse.containsMouse ? 30 : 0
+                        Behavior on rotation { enabled: theme.animate; SpringAnimation { spring: 2.0; damping: 0.25 } }
+                    }
+                    LoafShape {
+                        width: 30; height: 30
+                        x: parent.width - 22; y: -4
+                        shape: "sunny"
+                        color: theme.tertiaryContainer
+                        rotation: heroMouse.containsMouse ? -45 : 0
+                        Behavior on rotation { enabled: theme.animate; SpringAnimation { spring: 2.0; damping: 0.25 } }
+                    }
+                    Rectangle {
+                        width: 14; height: 14; radius: 7
+                        x: 2; y: parent.height - 16
+                        color: theme.secondaryContainer
+                    }
                     LoafIcon {
                         anchors.centerIn: parent
                         name: core.device_type === "laptop" ? "laptop" : "desktop"
-                        size: 22
+                        size: 44
                         color: theme.primaryContainerFg
+                    }
+                    MouseArea {
+                        id: heroMouse
+                        anchors.fill: parent
+                        hoverEnabled: true
+                        acceptedButtons: Qt.NoButton
                     }
                 }
 
-                Text {
-                    text: core.hostname || qsTr("This PC")
-                    color: theme.textMain
-                    font.pixelSize: theme.fs(26)
-                    font.bold: true
-                    font.letterSpacing: -0.5
+                ColumnLayout {
                     Layout.fillWidth: true
-                    elide: Text.ElideRight
+                    spacing: 4
+
+                    Text {
+                        id: pcNameText
+                        text: core.pc_name || core.hostname || qsTr("This PC")
+                        color: theme.textMain
+                        font.pixelSize: theme.fs(32)
+                        font.bold: true
+                        font.letterSpacing: -0.8
+                        Layout.fillWidth: true
+                        elide: Text.ElideRight
+
+                        // Only the name itself opens the page context menu.
+                        MouseArea {
+                            width: Math.min(parent.width, pcNameText.contentWidth)
+                            height: parent.height
+                            acceptedButtons: Qt.RightButton
+                            onClicked: function (mouse) {
+                                var p = mapToItem(window.contentItem, mouse.x, mouse.y);
+                                pcView.openPcMenu(p.x, p.y);
+                            }
+                        }
+                    }
+                    Text {
+                        text: {
+                            var kind = core.device_type === "laptop" ? qsTr("Laptop") : qsTr("Desktop");
+                            if (pcView.totalInternalBytes <= 0)
+                                return kind;
+                            var freeStr = qsTr("%1 free of %2")
+                                .arg(pcView.formatBytes(pcView.freeInternalBytes))
+                                .arg(pcView.formatBytes(pcView.totalInternalBytes));
+                            return [kind, freeStr].join("  ·  ");
+                        }
+                        color: theme.textMuted
+                        font.pixelSize: theme.fs(14)
+                        Layout.fillWidth: true
+                        elide: Text.ElideRight
+                    }
                 }
 
-                // Customize / Done (only when the experimental flag is enabled).
+                // Decorative cluster; hidden on narrow windows.
+                Item {
+                    visible: pcFlick.width > 720
+                    Layout.preferredWidth: 132
+                    Layout.preferredHeight: 96
+
+                    LoafShape {
+                        width: 72; height: 72
+                        x: 0; y: 14
+                        shape: "flower"
+                        color: theme.tertiaryContainer
+                        rotation: 12
+                    }
+                    LoafShape {
+                        width: 48; height: 48
+                        x: 64; y: 0
+                        shape: "clover4"
+                        color: theme.primaryContainer
+                        rotation: 45
+                    }
+                    Rectangle {
+                        width: 18; height: 18; radius: 9
+                        x: 100; y: 66
+                        color: theme.primary
+                    }
+                }
+
                 LoafButton {
                     id: customizeBtn
                     visible: pcView.customizationEnabled
+                    Layout.alignment: Qt.AlignTop
                     text: pcView.customizing ? qsTr("Done") : qsTr("Customize")
                     icon: pcView.customizing ? "check" : "sliders-horizontal"
                     variant: pcView.customizing ? "tonal" : "outlined"
                     onClicked: pcView.isCustomizing = !pcView.isCustomizing
                 }
             }
-
-            // ===== SECTIONS (Reorderable) =====
             Repeater {
                 model: pcView.sectionOrder
 
@@ -396,23 +632,44 @@ Item {
                     property string secKey: modelData
                     property bool secVisible: pcView.sectionVisible(modelData)
                     property string secView: pcView.sectionView(modelData)
-
-                    // ----- Section header + customization controls -----
                     SectionHeader {
                         Layout.fillWidth: true
                         icon: sectionDelegate.secKey === "places" ? "folder"
                               : sectionDelegate.secKey === "disks" ? "hard-drives"
                               : (sectionDelegate.secKey === "frequent" ? "clock"
-                              : (sectionDelegate.secKey === "internal" ? "hard-drives" : "usb"))
+                              : (sectionDelegate.secKey === "internal" ? "hard-drives"
+                              : (sectionDelegate.secKey === "external" ? "usb"
+                              : (sectionDelegate.secKey === "remotes" ? "plugs-connected" : "network"))))
                         title: sectionDelegate.secKey === "places" ? qsTr("Places")
                                : sectionDelegate.secKey === "disks" ? qsTr("Disks")
                                : (sectionDelegate.secKey === "frequent" ? qsTr("Frequent")
-                               : (sectionDelegate.secKey === "internal" ? qsTr("Internal Storage") : qsTr("External Storage")))
+                               : (sectionDelegate.secKey === "internal" ? qsTr("Internal Storage")
+                               : (sectionDelegate.secKey === "external" ? qsTr("External Storage")
+                               : (sectionDelegate.secKey === "remotes" ? qsTr("Remotes") : qsTr("Network Shares")))))
                         subtitle: sectionDelegate.secKey === "external"
                                   ? theme.plural(pcView.externalDrives.length, qsTr("1 drive connected"), qsTr("%1 drives connected"))
-                                  : ""
-
-                        // View mode toggle (places / frequent only)
+                                  : (sectionDelegate.secKey === "remotes"
+                                     ? (pcView.connectedRemotes > 0
+                                        ? qsTr("%1 connected · %2 total").arg(pcView.connectedRemotes).arg(pcView.remoteItems.length)
+                                        : theme.plural(pcView.remoteItems.length, qsTr("1 remote saved"), qsTr("%1 remotes saved")))
+                                     : (sectionDelegate.secKey === "network"
+                                        ? theme.plural(pcView.discoveredServers.length, qsTr("1 server found"), qsTr("%1 servers found"))
+                                        : ""))
+                        LoafButton {
+                            visible: sectionDelegate.secKey === "network" && !pcView.customizing
+                            text: qsTr("Scan")
+                            icon: "arrows-clockwise"
+                            variant: "tonal"
+                            enabled: core.smb_discovery_scanning !== true
+                            onClicked: core.refresh_smb_discovery()
+                        }
+                        LoafButton {
+                            visible: sectionDelegate.secKey === "remotes" && !pcView.customizing
+                            text: qsTr("Add")
+                            icon: "plus"
+                            variant: "tonal"
+                            onClicked: window.openSmbEditor({})
+                        }
                         LoafButton {
                             visible: pcView.customizing
                                      && (sectionDelegate.secKey === "places" || sectionDelegate.secKey === "frequent")
@@ -443,15 +700,13 @@ Item {
                             onClicked: pcView.toggleSectionVisibility(sectionDelegate.secKey)
                         }
                     }
-
-                    // ----- Dashed restore strip when a section is hidden -----
                     Rectangle {
                         Layout.fillWidth: true
                         Layout.preferredHeight: 52
                         visible: pcView.customizing && !sectionDelegate.secVisible
                         radius: theme.radiusM
                         color: "transparent"
-                        border.color: theme.outline
+                        border.color: theme.outlineAlpha(theme.outline)
                         border.width: 1
 
                         RowLayout {
@@ -470,59 +725,69 @@ Item {
                             }
                         }
                     }
-
-                    // ==========================================
-                    // SECTION: PLACES
-                    // ==========================================
                     Item {
                         Layout.fillWidth: true
-                        Layout.preferredHeight: sectionDelegate.secView === "carousel" ? 54 : placesGrid.implicitHeight
+                        Layout.preferredHeight: sectionDelegate.secView === "carousel" ? 60 : placesGrid.implicitHeight
                         visible: sectionDelegate.secVisible && sectionDelegate.secKey === "places"
 
                         GridLayout {
                             id: placesGrid
                             visible: sectionDelegate.secView !== "carousel"
                             anchors.fill: parent
-                            columns: pcView.columnCount(170)
-                            columnSpacing: 10
-                            rowSpacing: 10
+                            columns: pcView.columnCount(150)
+                            columnSpacing: 12
+                            rowSpacing: 12
 
                             Repeater {
                                 model: pcView.quickPlaces
 
                                 delegate: Rectangle {
                                     Layout.fillWidth: true
-                                    Layout.preferredHeight: 52
-                                    radius: theme.radiusL
-                                    color: theme.surfaceContainer
-                                    opacity: placeMouse.containsMouse ? 1.0 : 0.85
-                                    scale: placeMouse.pressed ? 0.96 : (placeMouse.containsMouse ? 1.02 : 1.0)
-                                    Behavior on opacity { enabled: theme.animate; NumberAnimation { duration: theme.durationFast } }
+                                    Layout.preferredHeight: 116
+                                    radius: theme.radiusXl
+                                    color: placeMouse.containsMouse ? theme.surfaceContainerHigh : theme.surfaceContainer
+                                    scale: placeMouse.pressed ? 0.95 : (placeMouse.containsMouse ? 1.02 : 1.0)
+                                    Behavior on color { enabled: theme.animate; ColorAnimation { duration: theme.durationFast } }
                                     Behavior on scale { enabled: theme.animate; SpringAnimation { spring: 3.5; damping: 0.32 } }
 
-                                    RowLayout {
-                                        anchors.fill: parent
-                                        anchors.leftMargin: 14
-                                        anchors.rightMargin: 14
+                                    ColumnLayout {
+                                        anchors.centerIn: parent
+                                        width: parent.width - 24
                                         spacing: 10
 
-                                        LoafIcon {
-                                            visible: theme.customIcon("place:" + modelData.id) === ""
-                                            name: modelData.icon
-                                            size: 20
-                                            color: theme.primary
-                                        }
-                                        CustomIcon {
-                                            visible: spec !== ""
-                                            spec: theme.customIcon("place:" + modelData.id)
-                                            size: 20
-                                            color: theme.primary
+                                        Item {
+                                            Layout.alignment: Qt.AlignHCenter
+                                            Layout.preferredWidth: 56
+                                            Layout.preferredHeight: 56
+
+                                            LoafShape {
+                                                anchors.fill: parent
+                                                shape: pcView.placeShape(index)
+                                                color: pcView.placeContainer(index)
+                                                rotation: placeMouse.containsMouse ? 45 : 0
+                                                Behavior on rotation { enabled: theme.animate; SpringAnimation { spring: 2.5; damping: 0.26 } }
+                                            }
+                                            LoafIcon {
+                                                visible: theme.customIcon("place:" + modelData.id) === ""
+                                                anchors.centerIn: parent
+                                                name: modelData.icon
+                                                size: 24
+                                                color: pcView.placeOnContainer(index)
+                                            }
+                                            CustomIcon {
+                                                visible: spec !== ""
+                                                anchors.centerIn: parent
+                                                spec: theme.customIcon("place:" + modelData.id)
+                                                size: 24
+                                                color: pcView.placeOnContainer(index)
+                                            }
                                         }
                                         Text {
-                                            text: modelData.name
+                                            text: theme.resolveRustMessage(modelData.name)
                                             color: theme.textMain
                                             font.pixelSize: theme.fs(13)
                                             font.bold: true
+                                            horizontalAlignment: Text.AlignHCenter
                                             Layout.fillWidth: true
                                             elide: Text.ElideRight
                                         }
@@ -552,19 +817,46 @@ Item {
                             model: pcView.quickPlaces
 
                             delegate: Rectangle {
-                                width: 140
-                                height: 50
-                                radius: theme.radiusL
-                                color: theme.surfaceContainer
-                                opacity: cPlaceMouse.containsMouse ? 1.0 : 0.85
+                                width: 156
+                                height: 60
+                                radius: theme.radiusFull
+                                color: cPlaceMouse.containsMouse ? theme.surfaceContainerHigh : theme.surfaceContainer
                                 scale: cPlaceMouse.pressed ? 0.95 : 1.0
+                                Behavior on color { enabled: theme.animate; ColorAnimation { duration: theme.durationFast } }
                                 Behavior on scale { enabled: theme.animate; SpringAnimation { spring: 3.5; damping: 0.3 } }
 
                                 RowLayout {
-                                    anchors.centerIn: parent
-                                    spacing: 8
-                                    LoafIcon { name: modelData.icon; size: 18; color: theme.primary }
-                                    Text { text: modelData.name; color: theme.textMain; font.pixelSize: theme.fs(12); font.bold: true }
+                                    anchors.fill: parent
+                                    anchors.leftMargin: 10
+                                    anchors.rightMargin: 16
+                                    spacing: 10
+
+                                    Item {
+                                        Layout.preferredWidth: 40
+                                        Layout.preferredHeight: 40
+
+                                        LoafShape {
+                                            anchors.fill: parent
+                                            shape: pcView.placeShape(index)
+                                            color: pcView.placeContainer(index)
+                                            rotation: cPlaceMouse.containsMouse ? 45 : 0
+                                            Behavior on rotation { enabled: theme.animate; SpringAnimation { spring: 2.5; damping: 0.26 } }
+                                        }
+                                        LoafIcon {
+                                            anchors.centerIn: parent
+                                            name: modelData.icon
+                                            size: 18
+                                            color: pcView.placeOnContainer(index)
+                                        }
+                                    }
+                                    Text {
+                                        text: theme.resolveRustMessage(modelData.name)
+                                        color: theme.textMain
+                                        font.pixelSize: theme.fs(12)
+                                        font.bold: true
+                                        elide: Text.ElideRight
+                                        Layout.fillWidth: true
+                                    }
                                 }
 
                                 MouseArea {
@@ -580,10 +872,7 @@ Item {
                             }
                         }
                     }
-
-                    // ==========================================
-                    // SECTION: DISKS
-                    // ==========================================
+                    // Disks: one DiskCard per drive, to pick which one to open.
                     GridLayout {
                         Layout.fillWidth: true
                         visible: sectionDelegate.secVisible && sectionDelegate.secKey === "disks"
@@ -592,7 +881,7 @@ Item {
                         rowSpacing: 12
 
                         Repeater {
-                            model: pcView.allDrives
+                            model: sectionDelegate.secKey === "disks" ? pcView.allDrives : []
 
                             delegate: DiskCard {
                                 id: diskCard
@@ -605,10 +894,6 @@ Item {
                             }
                         }
                     }
-
-                    // ==========================================
-                    // SECTION: FREQUENT
-                    // ==========================================
                     Item {
                         Layout.fillWidth: true
                         Layout.preferredHeight: sectionDelegate.secView === "grid" ? freqGrid.implicitHeight : 48
@@ -637,7 +922,7 @@ Item {
                                     anchors.centerIn: parent
                                     spacing: 8
                                     LoafIcon { name: modelData.icon || "folder"; size: 16; color: theme.primary }
-                                    Text { text: modelData.name; color: theme.textMain; font.pixelSize: theme.fs(12); font.bold: true }
+                                    Text { text: theme.resolveRustMessage(modelData.name); color: theme.textMain; font.pixelSize: theme.fs(12); font.bold: true }
                                 }
 
                                 MouseArea {
@@ -677,7 +962,7 @@ Item {
                                         anchors.centerIn: parent
                                         spacing: 8
                                         LoafIcon { name: modelData.icon || "folder"; size: 16; color: theme.primary }
-                                        Text { text: modelData.name; color: theme.textMain; font.pixelSize: theme.fs(12); font.bold: true; elide: Text.ElideRight }
+                                        Text { text: theme.resolveRustMessage(modelData.name); color: theme.textMain; font.pixelSize: theme.fs(12); font.bold: true; elide: Text.ElideRight }
                                     }
 
                                     MouseArea {
@@ -694,53 +979,86 @@ Item {
                             }
                         }
                     }
-
-                    // ==========================================
-                    // SECTION: INTERNAL STORAGE
-                    // ==========================================
                     ColumnLayout {
                         Layout.fillWidth: true
                         spacing: 12
                         visible: sectionDelegate.secVisible
                                  && sectionDelegate.secKey === "internal"
                                  && pcView.internalDrives.length > 0
-
-                        // Aggregate summary card (total / free). No percentage pill.
-                        LoafCard {
+                        // Pool summary; with a single drive it would only repeat its card.
+                        Rectangle {
+                            visible: pcView.internalDrives.length > 1
                             Layout.fillWidth: true
+                            Layout.preferredHeight: poolCol.implicitHeight + 40
+                            radius: theme.radiusXl
+                            color: theme.surfaceContainerHigh
 
-                            RowLayout {
-                                Layout.fillWidth: true
-                                spacing: 12
+                            ColumnLayout {
+                                id: poolCol
+                                anchors.fill: parent
+                                anchors.margins: 20
+                                spacing: 14
 
-                                LoafIcon { name: "hard-drives"; size: 24; color: theme.primary }
-
-                                ColumnLayout {
+                                RowLayout {
                                     Layout.fillWidth: true
-                                    spacing: 2
-                                    Text {
-                                        text: qsTr("System Drive Pool")
-                                        color: theme.textMain
-                                        font.pixelSize: theme.fs(15)
-                                        font.bold: true
-                                        Layout.fillWidth: true
-                                        elide: Text.ElideRight
+                                    spacing: 16
+
+                                    Item {
+                                        Layout.preferredWidth: 56
+                                        Layout.preferredHeight: 56
+
+                                        LoafShape {
+                                            anchors.fill: parent
+                                            shape: "burst"
+                                            color: theme.primaryContainer
+                                        }
+                                        LoafIcon {
+                                            anchors.centerIn: parent
+                                            name: "hard-drives"
+                                            size: 26
+                                            color: theme.primaryContainerFg
+                                        }
                                     }
-                                    Text {
-                                        text: pcView.formatBytes(pcView.usedInternalBytes) + " used of "
-                                              + pcView.formatBytes(pcView.totalInternalBytes) + "  ·  "
-                                              + pcView.formatBytes(pcView.freeInternalBytes) + " free"
-                                        color: theme.textMuted
-                                        font.pixelSize: theme.fs(12)
+
+                                    ColumnLayout {
                                         Layout.fillWidth: true
-                                        elide: Text.ElideRight
+                                        spacing: 2
+                                        Text {
+                                            text: qsTr("System Drive Pool")
+                                            color: theme.textMain
+                                            font.pixelSize: theme.fs(16)
+                                            font.bold: true
+                                            Layout.fillWidth: true
+                                            elide: Text.ElideRight
+                                        }
+                                        Text {
+                                            text: qsTr("%1 used of %2  ·  %3 free")
+                                                .arg(pcView.formatBytes(pcView.usedInternalBytes))
+                                                .arg(pcView.formatBytes(pcView.totalInternalBytes))
+                                                .arg(pcView.formatBytes(pcView.freeInternalBytes))
+                                            color: theme.textMuted
+                                            font.pixelSize: theme.fs(12)
+                                            Layout.fillWidth: true
+                                            elide: Text.ElideRight
+                                        }
+                                    }
+
+                                    Text {
+                                        text: Math.round(pcView.overallUsage * 100) + "%"
+                                        color: theme.primary
+                                        font.pixelSize: theme.fs(34)
+                                        font.bold: true
+                                        font.letterSpacing: -1
                                     }
                                 }
-                            }
 
-                            UsageBar {
-                                Layout.fillWidth: true
-                                value: pcView.overallUsage
+                                UsageBar {
+                                    Layout.fillWidth: true
+                                    value: pcView.overallUsage
+                                    thickness: 6
+                                    amplitude: 4
+                                    wavelength: 48
+                                }
                             }
                         }
 
@@ -756,10 +1074,6 @@ Item {
                             }
                         }
                     }
-
-                    // ==========================================
-                    // SECTION: EXTERNAL STORAGE
-                    // ==========================================
                     ColumnLayout {
                         Layout.fillWidth: true
                         spacing: 12
@@ -779,12 +1093,130 @@ Item {
                             }
                         }
                     }
+                    ColumnLayout {
+                        Layout.fillWidth: true
+                        spacing: 12
+                        visible: sectionDelegate.secVisible
+                                 && sectionDelegate.secKey === "remotes"
+                                 && pcView.remoteItems.length > 0
+
+                        GridLayout {
+                            Layout.fillWidth: true
+                            columns: pcView.columnCount(340)
+                            columnSpacing: 12
+                            rowSpacing: 12
+
+                            Repeater {
+                                model: pcView.remoteItems
+                                delegate: remoteDelegate
+                            }
+                        }
+                    }
+                    ColumnLayout {
+                        Layout.fillWidth: true
+                        spacing: 10
+                        visible: sectionDelegate.secVisible
+                                 && sectionDelegate.secKey === "network"
+                                 && pcView.discoveredServers.length > 0
+
+                        Repeater {
+                            model: pcView.discoveredServers
+
+                            delegate: Rectangle {
+                                required property var modelData
+                                readonly property var entry: modelData
+
+                                Layout.fillWidth: true
+                                Layout.minimumWidth: 0
+                                implicitHeight: networkRow.implicitHeight + 28
+                                radius: theme.radiusXl
+                                color: theme.surfaceContainerHigh
+                                border.width: 1
+                                border.color: theme.outlineAlpha(theme.borderSubtle)
+
+                                RowLayout {
+                                    id: networkRow
+                                    anchors.fill: parent
+                                    anchors.margins: 14
+                                    spacing: 14
+
+                                    LoafShape {
+                                        Layout.preferredWidth: 44
+                                        Layout.preferredHeight: 44
+                                        shape: "cookie6"
+                                        color: theme.secondaryContainer
+
+                                        LoafIcon {
+                                            anchors.centerIn: parent
+                                            name: "network"
+                                            size: 21
+                                            color: theme.secondaryContainerFg
+                                        }
+                                    }
+
+                                    ColumnLayout {
+                                        Layout.fillWidth: true
+                                        Layout.minimumWidth: 0
+                                        spacing: 5
+
+                                        Text {
+                                            text: entry.name || entry.server || ""
+                                            color: theme.textMain
+                                            font.pixelSize: theme.fs(13)
+                                            font.bold: true
+                                            elide: Text.ElideRight
+                                            Layout.fillWidth: true
+                                        }
+
+                                        Text {
+                                            visible: pcView.serverSubtitle(entry).length > 0
+                                            text: pcView.serverSubtitle(entry)
+                                            color: theme.textMuted
+                                            font.pixelSize: theme.fs(11)
+                                            elide: Text.ElideMiddle
+                                            Layout.fillWidth: true
+                                        }
+
+                                        Flow {
+                                            Layout.fillWidth: true
+                                            spacing: 6
+                                            visible: (entry.shares || []).length > 0
+
+                                            Repeater {
+                                                model: entry.shares || []
+
+                                                delegate: LoafButton {
+                                                    required property string modelData
+                                                    text: modelData
+                                                    icon: "plus"
+                                                    variant: "tonal"
+                                                    onClicked: pcView.addDiscoveredShare(entry.server, modelData)
+                                                }
+                                            }
+                                        }
+                                    }
+
+                                    LoafButton {
+                                        text: qsTr("Add Share…")
+                                        icon: "plus"
+                                        variant: "outlined"
+                                        onClicked: window.openSmbEditor({ server: entry.server, name: entry.name, share: "" })
+                                    }
+
+                                    LoafButton {
+                                        icon: "eye-slash"
+                                        variant: "ghost"
+                                        Accessible.name: qsTr("Hide this server")
+                                        onClicked: core.ignore_smb_server(entry.server)
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }
     }
-
-    // Shared delegate for every drive row (internal + external).
     Component {
         id: driveDelegate
 
@@ -800,16 +1232,39 @@ Item {
             }
         }
     }
+    Component {
+        id: remoteDelegate
 
-    // Right-click drive actions.
+        RemoteCard {
+            id: remoteCard
+            remote: modelData
+
+            onActivated: pcView.openRemote(remoteCard.remote)
+            onActionRequested: pcView.openRemote(remoteCard.remote)
+            onContextRequested: function (mx, my) {
+                var p = remoteCard.mapToItem(null, mx - remoteCard.x, my - remoteCard.y);
+                pcView.openRemoteMenu(remoteCard.remote, p.x, p.y);
+            }
+        }
+    }
     LoafMenu {
         id: driveMenu
         parent: Overlay.overlay
         model: []
         menuMinWidth: 208
     }
-
-    // Rename drive prompt.
+    LoafMenu {
+        id: remoteMenu
+        parent: Overlay.overlay
+        model: []
+        menuMinWidth: 208
+    }
+    LoafMenu {
+        id: pcMenu
+        parent: Overlay.overlay
+        model: []
+        menuMinWidth: 208
+    }
     LoafTextPrompt {
         id: renamePrompt
         title: qsTr("Rename Drive")
@@ -820,6 +1275,17 @@ Item {
             if (name.length > 0 && pcView.renameDevice.length > 0) {
                 core.rename_drive(pcView.renameDevice, name);
             }
+        }
+    }
+
+    LoafTextPrompt {
+        id: pcNamePrompt
+        title: qsTr("Rename This PC")
+        label: qsTr("Leave empty to use the hostname (%1)").arg(core.hostname || qsTr("This PC"))
+        placeholder: core.hostname || qsTr("This PC")
+        confirmText: qsTr("Save")
+        onAccepted: function (text) {
+            core.set_pc_custom_name(String(text).trim());
         }
     }
 }

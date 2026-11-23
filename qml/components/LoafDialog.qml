@@ -40,13 +40,13 @@ Popup {
     }
 
     Overlay.modal: Rectangle {
-        color: "#00000099"
+        color: theme.scrim
     }
 
     background: Rectangle {
         radius: theme.radiusXl
         color: theme.surfaceContainerHigh
-        border.color: theme.borderSubtle
+        border.color: theme.outlineAlpha(theme.borderSubtle)
         border.width: 1
 
         Behavior on color { enabled: theme.animate; ColorAnimation { duration: theme.durationNormal } }

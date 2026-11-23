@@ -4,7 +4,7 @@ Item {
     id: iconRoot
     property string name: "file"
     property real size: 20
-    property color color: (typeof theme !== "undefined" && theme && theme.textMain) ? theme.textMain : "#e6e1e6"
+    property color color: (typeof theme !== "undefined" && theme && theme.textMain) ? theme.textMain : "currentColor"
 
     width: size
     height: size

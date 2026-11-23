@@ -5,20 +5,211 @@ Item {
     visible: false
 
     property string themeMode: "auto" // "auto", "light", "dark"
-    property string accentName: "unia" // "unia", "wallpaper", "lavender", "amber", "catppuccin", "nord", "tokyonight", "gruvbox", "rosepine"
-    property string iconSource: "phosphor" // "phosphor" or "system"
+
+    property string language: ""
+
+    // How much of the desktop shows through the window itself.
+    // Oxygen Files is glass by default: Unia's standard 0.35 for the window and its panels.
+    property real backgroundOpacity: 0.35
+    // How solid the surfaces drawn on top of it are: file panes, the sidebar
+    // and settings cards. Text, icons, menus and dialogs stay out of this, so
+    // this only fades the backing behind them.
+    property real panelOpacity: 0.35
+
+    // Glass needs the compositor's blur: with it switched off (Unia: Theme → Blur) the window is
+    // solid, otherwise it would just be see-through. Checked every couple of seconds, so the switch
+    // applies live. Light grounds stay denser so dark text keeps its contrast.
+    readonly property bool compositorBlur: typeof core === "undefined" || !core || core.compositor_blur
+    function glassAlpha(a) {
+        a = isFinite(a) ? Math.max(0.0, Math.min(1.0, a)) : 1.0;
+        return isDark ? a : a + (1 - a) * 0.4;
+    }
+    readonly property real effectiveBackgroundOpacity: (lowPower || !compositorBlur) ? 1.0 : glassAlpha(backgroundOpacity)
+    readonly property real effectivePanelOpacity: (lowPower || !compositorBlur) ? 1.0 : glassAlpha(panelOpacity)
+    Timer {
+        interval: 2000
+        running: theme.backgroundOpacity < 1.0 && typeof core !== "undefined" && !!core
+        repeat: true
+        onTriggered: core.refresh_compositor_blur()
+    }
+
+    // Window background RGB is premultiplied by alpha for Wayland compositors.
+    readonly property color windowBackground: {
+        var a = effectiveBackgroundOpacity;
+        return Qt.rgba(background.r * a, background.g * a, background.b * a, a);
+    }
+
+    // Panels are drawn over the window, so what reaches the screen is
+    // `panelOpacity` of the panel color over whatever the window alpha let
+    // through. At 0% a panel is as clear as the desktop behind it; at 100% it is
+    // solid even when the window is not. The default keeps labels readable on a
+    // wallpaper without hiding it.
+    function backdropSurface(color) {
+        if (effectivePanelOpacity >= 1.0)
+            return color;
+        return Qt.rgba(color.r, color.g, color.b, effectivePanelOpacity);
+    }
+    property string accentName: "unia" // "unia", a saved palette's id, or "" (see accentColor)
+    // Which wallpaper palette source to extract colors from when accentName is "wallpaper".
+    // "auto" uses the first detected generated palette or KDE accent source.
+    property string wallpaperPaletteSource: "auto"
+    // Detected wallpaper palette sources: [{ id, label, path }]. Populated from core.
+    property var availableWallpaperPaletteSources: []
+    property string iconSource: "phosphor" // "phosphor", "system", "adwaita" or "custom"
+    property string customIconTheme: "" // icon theme folder name used when iconSource is "custom"
     property string phosphorWeight: "regular" // "regular", "bold", "fill", "duotone", "light", "thin"
     property string dragAction: "select" // "select" (selection box) or "scroll" (pan view)
     property bool showThumbnails: true
+    // "square": thumbnails cropped to the icon box; "original": their own aspect ratio.
+    property string thumbnailShape: "square"
     property bool showExperimentalIcons: false
     property bool showAdvancedArchives: false
     property bool experimentalPcCustomization: false
+    property bool shareViaLinkEnabled: false
+    property bool smbAutoDiscovery: true
+    property string shareProvider: "local" // "local" (Cloudflare Tunnel), "cloud" (Loaf Cloud - coming soon)
+    property bool shareCompressFolders: true
+    property bool shareCompressFiles: false
+    property string shareCompressFormat: "zip" // "zip", "7z", "tar.gz"
+    property string sharePassword: ""
+    property int shareExpirationHours: 24 // 0 for disabled
+    property int shareThrottleKbps: 0 // 0 for unlimited
     property string contextMenuMode: "full" // "full", "minimal", "custom"
     property var disabledMenuItems: ({})
     property bool hideTrashWhenEmpty: true
+    property string toolbarOperations: "auto" // "auto", "always", "hidden" -- back/forward buttons
+    property bool showNewTabButton: true
+    property bool showNewWindowButton: true
+    property string pathBarMode: "chips" // "chips", "text"
+    property string openFolderMode: "current" // "current", "split", "tab"
+    property string archiveOpenAction: "browse" // "browse", "extract", "open"
+    property string clickToOpen: "double" // "double", "single"
+    // Ctrl+Shift+click: "standard" selects only the range from the anchor to the item; "legacy"
+    // adds that range to what is already selected and moves the anchor, so ranges chain in order.
+    property string rangeSelectMode: "standard" // "standard", "legacy"
+    // Which file-view icons pick up the accent tint.
+    property string iconColorMode: "folders" // "folders", "files", "all", "none"
+    // The foreground Material color used for the tint above.
+    property string iconColor: "primary" // "primary", "secondary", "tertiary", "danger", "textMain", "textMuted"
+    // Hover tooltips on icon-only controls.
+    property bool showTooltips: true
+    // Chrome outlines (borders on floating pills, cards, inputs). Optional,
+    // with an intensity slider that scales their alpha.
+    property bool showOutlines: true
+    property int outlineIntensity: 100
+    property bool showBackgroundShapes: true
 
-    // ---- performance / accessibility ---------------------------------------
-    // "auto" turns low-power mode on when Qt renders without a GPU.
+    property var keybindings: ({})
+    readonly property var defaultKeybindings: ({
+        "undo": "Ctrl+Z",
+        "redo": "Ctrl+Shift+Z",
+        "copy": "Ctrl+C",
+        "cut": "Ctrl+X",
+        "paste": "Ctrl+V",
+        "selectAll": "Ctrl+A",
+        "invertSelection": "Ctrl+Shift+I",
+        "selectPattern": "Ctrl+S",
+        "toggleHidden": "Ctrl+H",
+        "editPath": "Ctrl+L",
+        "search": "Ctrl+F",
+        "rename": "F2",
+        "quickLook": "Space",
+        "trash": "Delete",
+        "deletePermanent": "Shift+Delete",
+        "back": "Alt+Left",
+        "forward": "Alt+Right",
+        "up": "Alt+Up",
+        "home": "Alt+Home",
+        "backAlt": "Backspace",
+        "refresh": "F5",
+        "newTab": "Ctrl+T",
+        "closeTab": "Ctrl+W",
+        "nextTab": "Ctrl+Tab",
+        "prevTab": "Ctrl+Shift+Tab",
+        "newWindow": "Ctrl+N",
+        "newFolder": "Ctrl+Shift+N",
+        "toggleSplit": "F3",
+        "toggleSidebar": "F9",
+        "zoomIn": "Ctrl+=",
+        "zoomOut": "Ctrl+-",
+        "zoomReset": "Ctrl+0",
+        "viewGrid": "Ctrl+1",
+        "viewList": "Ctrl+2",
+        "bookmark": "Ctrl+D",
+        "copyPath": "Ctrl+Shift+C",
+        "properties": "Alt+Return",
+        "quit": "Ctrl+Q"
+    })
+
+    function shortcutFor(id) {
+        if (keybindings && typeof keybindings[id] === "string" && keybindings[id].length > 0)
+            return keybindings[id];
+        return defaultKeybindings[id] || "";
+    }
+
+    function setShortcut(id, seq) {
+        var next = Object.assign({}, keybindings || {});
+        if (!seq || seq === defaultKeybindings[id])
+            delete next[id];
+        else
+            next[id] = seq;
+        keybindings = next;
+    }
+
+    function resetShortcut(id) {
+        setShortcut(id, "");
+    }
+
+    function resetAllKeybindings() {
+        keybindings = ({});
+    }
+
+    function keyEventToSequence(event) {
+        var k = event.key;
+        if (k === Qt.Key_Control || k === Qt.Key_Shift || k === Qt.Key_Alt || k === Qt.Key_Meta || k === Qt.Key_AltGr)
+            return "";
+        var parts = [];
+        if (event.modifiers & Qt.ControlModifier) parts.push("Ctrl");
+        if (event.modifiers & Qt.AltModifier) parts.push("Alt");
+        if (event.modifiers & Qt.ShiftModifier) parts.push("Shift");
+        if (event.modifiers & Qt.MetaModifier) parts.push("Meta");
+        var keyName = "";
+        switch (k) {
+        case Qt.Key_Space: keyName = "Space"; break;
+        case Qt.Key_Return: keyName = "Return"; break;
+        case Qt.Key_Enter: keyName = "Enter"; break;
+        case Qt.Key_Delete: keyName = "Delete"; break;
+        case Qt.Key_Backspace: keyName = "Backspace"; break;
+        case Qt.Key_Tab:
+        case Qt.Key_Backtab: keyName = "Tab"; break;
+        case Qt.Key_Left: keyName = "Left"; break;
+        case Qt.Key_Right: keyName = "Right"; break;
+        case Qt.Key_Up: keyName = "Up"; break;
+        case Qt.Key_Down: keyName = "Down"; break;
+        case Qt.Key_Home: keyName = "Home"; break;
+        case Qt.Key_End: keyName = "End"; break;
+        case Qt.Key_PageUp: keyName = "PgUp"; break;
+        case Qt.Key_PageDown: keyName = "PgDown"; break;
+        case Qt.Key_Plus:
+        case Qt.Key_Equal: keyName = (k === Qt.Key_Plus) ? "+" : "="; break;
+        case Qt.Key_Minus: keyName = "-"; break;
+        default:
+            if (k >= Qt.Key_F1 && k <= Qt.Key_F12)
+                keyName = "F" + (k - Qt.Key_F1 + 1);
+            else if (k >= Qt.Key_A && k <= Qt.Key_Z)
+                keyName = String.fromCharCode(k);
+            else if (k >= Qt.Key_0 && k <= Qt.Key_9)
+                keyName = String.fromCharCode(k);
+            else if (event.text && event.text.length === 1 && event.text.charCodeAt(0) > 32)
+                keyName = event.text.toUpperCase();
+        }
+        if (!keyName)
+            return "";
+        parts.push(keyName);
+        return parts.join("+");
+    }
+
+    // Low-power mode activates automatically when running on software rendering or low-end hardware.
     property string lowPowerSetting: "auto" // "auto", "on", "off"
     property bool reduceMotionSetting: false
     readonly property bool softwareRendering: GraphicsInfo.api === GraphicsInfo.Software
@@ -26,6 +217,18 @@ Item {
         || (lowPowerSetting === "auto" && (softwareRendering || (typeof core !== "undefined" && core && core.low_end_hardware)))
     // Every Behavior / transition checks this; false makes changes instant.
     readonly property bool animate: !reduceMotionSetting && !lowPower
+
+    function formatBytes(bytes) {
+        var b = Number(bytes) || 0;
+        var gb = 1024 * 1024 * 1024;
+        var tb = 1024 * gb;
+        var mb = 1024 * 1024;
+        if (b >= tb) return (b / tb).toFixed(1) + " TB";
+        if (b >= gb) return (b / gb).toFixed(1) + " GB";
+        if (b >= mb) return (b / mb).toFixed(1) + " MB";
+        if (b > 0) return (b / 1024).toFixed(0) + " KB";
+        return "0 B";
+    }
 
     // Icon size in the file views (Ctrl + scroll / Ctrl +/-).
     readonly property var zoomLevels: [0.75, 0.875, 1.0, 1.25, 1.5, 2.0, 4.0, 6.0, 8.0]
@@ -43,28 +246,111 @@ Item {
         return Math.round(px * fontScale);
     }
 
+    // True when a file-view icon should be tinted with the accent colour.
+    // Shared by the grid card, the list row and the grouped list so the
+    // setting can never drift between views.
+    function tintIcon(isDir) {
+        if (iconColorMode === "all") return true;
+        if (iconColorMode === "none") return false;
+        if (iconColorMode === "files") return !isDir;
+        return isDir;
+    }
+
+    // The foreground Material color the tint uses. Resolved once so every
+    // view picks the same swatch for "Icon color".
+    readonly property color iconColorValue: iconColor === "secondary" ? secondaryContainerFg
+        : iconColor === "tertiary" ? tertiaryContainer
+        : iconColor === "danger" ? danger
+        : iconColor === "textMain" ? textMain
+        : iconColor === "textMuted" ? textMuted
+        : primary
+
+    // Outline chrome: one switch + one intensity knob drive every resting
+    // border in the app. Intensity scales the border alpha; off hides it.
+    function outlineAlpha(base) {
+        if (!showOutlines) return "transparent";
+        return Qt.rgba(base.r, base.g, base.b, base.a * Math.max(0, Math.min(100, outlineIntensity)) / 100);
+    }
+
+    // Black or white, whichever reads on top of c. Used for marks on swatches.
+    function onColor(c) {
+        var l = 0.2126 * c.r + 0.7152 * c.g + 0.0722 * c.b;
+        return l > 0.45 ? "#000000" : "#ffffff";
+    }
+
     // English singular/plural without a translation catalogue loaded:
     // plural(n, qsTr("1 item"), qsTr("%1 items")).
+    function plural(n, one, many) {
+        return n === 1 ? one : many.arg(number(n));
+    }
+
     // "100,000" (grouped the way the user's locale writes numbers).
     function number(n) {
         return Number(n).toLocaleString(Qt.locale(), "f", 0);
     }
 
-    function plural(n, one, many) {
-        return n === 1 ? one : many.arg(number(n));
+    function relativeTime(timestampSeconds) {
+        var ts = Number(timestampSeconds) || 0;
+        if (ts <= 0) return "-";
+        var elapsed = Math.floor(Date.now() / 1000) - ts;
+        if (elapsed < 0) elapsed = 0;
+        if (elapsed < 60) return qsTr("Just now");
+        if (elapsed < 3600) return qsTr("%1m ago").arg(number(Math.floor(elapsed / 60)));
+        if (elapsed < 86400) return qsTr("%1h ago").arg(number(Math.floor(elapsed / 3600)));
+        if (elapsed < 86400 * 7) return qsTr("%1d ago").arg(number(Math.floor(elapsed / 86400)));
+        return Qt.formatDate(new Date(ts * 1000), Qt.locale(), Locale.ShortFormat);
+    }
+
+
+    function substitute(template, values) {
+        return template.replace(/%(\d+)/g, function (m, index) { var value = values[Number(index) - 1]; return value === undefined || value === null ? m : String(value); });
+    }
+
+    Messages { id: messages }
+
+    // Rust emits {key,args} JSON for strings lupdate cannot see.
+    // Non-JSON text (OS/tool errors) is shown verbatim.
+    function resolveRustMessage(text) {
+        if (!text || text.length === 0 || text.charAt(0) !== "{") return text || "";
+        var decoded;
+        try { decoded = JSON.parse(text); } catch (e) { return text; }
+        if (!decoded || decoded.v !== 1) return text;
+        if (typeof decoded.raw === "string") return decoded.raw;
+        var key = decoded && decoded.key;
+        var a = (decoded && decoded.args) || [];
+        var resolvedArgs = a.map(function (item) { return (item !== null && typeof item === "object") ? resolveRustMessage(JSON.stringify(item)) : item; });
+        var out = messages.resolve(key, resolvedArgs);
+        if (out === undefined) return text;
+        return substitute(out, resolvedArgs);
+    }
+
+    function categoryName(key) {
+        if (key === "folder") return qsTr("Folder");
+        if (key === "image") return qsTr("Image");
+        if (key === "video") return qsTr("Video");
+        if (key === "audio") return qsTr("Audio");
+        if (key === "code") return qsTr("Code");
+        if (key === "archive") return qsTr("Archive");
+        if (key === "document") return qsTr("Document");
+        if (key === "text") return qsTr("Text");
+        if (key === "font") return qsTr("Font");
+        if (key === "application") return qsTr("Application");
+        if (key === "file") return qsTr("File");
+        return key || "";
     }
 
     // Single click on a selected item's name starts renaming.
     property bool clickToRename: false
     property bool searchContents: false
 
-    FontLoader { id: fontReg; source: "qrc:/loaf/fonts/Phosphor.ttf" }
-    FontLoader { id: fontBold; source: "qrc:/loaf/fonts/Phosphor-Bold.ttf" }
-    FontLoader { id: fontFill; source: "qrc:/loaf/fonts/Phosphor-Fill.ttf" }
-    FontLoader { id: fontDuotone; source: "qrc:/loaf/fonts/Phosphor-Duotone.ttf" }
-    FontLoader { id: fontLight; source: "qrc:/loaf/fonts/Phosphor-Light.ttf" }
-    FontLoader { id: fontThin; source: "qrc:/loaf/fonts/Phosphor-Thin.ttf" }
-    FontLoader { id: fontMaterial; source: "qrc:/loaf/fonts/MaterialSymbolsOutlined.ttf" }
+    // Only the weight in use is loaded (each file is ~0.5 MB; there are six).
+    readonly property string iconFontFile: ({ bold: "Phosphor-Bold", fill: "Phosphor-Fill", duotone: "Phosphor-Duotone",
+                                              light: "Phosphor-Light", thin: "Phosphor-Thin" })[phosphorWeight] || "Phosphor"
+    FontLoader { id: iconFont; source: "qrc:/loaf/fonts/" + iconFontFile + ".ttf" }
+    // Material Symbols (10 MB) loads only once a custom icon or the icon picker needs it.
+    property bool materialRequested: false
+    readonly property bool materialNeeded: materialRequested || JSON.stringify(customIcons).indexOf("\"material:") !== -1
+    FontLoader { id: fontMaterial; source: theme.materialNeeded ? "qrc:/loaf/fonts/MaterialSymbolsOutlined.ttf" : "" }
     readonly property string materialFamily: fontMaterial.name || "Material Symbols Outlined"
 
     // ---- custom icons -------------------------------------------------------
@@ -85,7 +371,7 @@ Item {
         customIcons = copy;
     }
     function driveIconKey(d) {
-        return d ? "drive:" + (d.model || "") + "/" + (d.name || d.device || "") : "";
+        return d ? "drive:" + (d.model || "") + "/" + (d.name ? resolveRustMessage(d.name) : (d.device || "")) : "";
     }
 
     // Simple Icons, parsed on first use: slug -> [slug, title, hex, path].
@@ -107,21 +393,63 @@ Item {
         return simpleIconMap ? (simpleIconMap[slug] || null) : null;
     }
 
+    property string fontChoice: "manrope" // "manrope" (Vision DesignSystem), "system", "google_flex", "opendyslexic", "custom"
+    property string customFontFamily: ""
+    property string monoFontFamily: ""
+    property string density: "comfortable" // "compact", "comfortable", "spacious"
+    readonly property real densityFactor: density === "compact" ? 0.85 : (density === "spacious" ? 1.18 : 1.0)
+    // Only load bundled fonts when selected so unused TTFs stay out of RAM at startup.
+    FontLoader { id: manropeFont; source: fontChoice === "manrope" ? "qrc:/loaf/fonts/Manrope.ttf" : "" }
+    FontLoader { id: googleFlexFont; source: fontChoice === "google_flex" ? "qrc:/loaf/fonts/GoogleSansFlex-Regular.ttf" : "" }
+    FontLoader { id: openDyslexicFont; source: fontChoice === "opendyslexic" ? "qrc:/loaf/fonts/OpenDyslexic-Regular.ttf" : "" }
+
+    readonly property string defaultFontFamily: {
+        if (fontChoice === "manrope")
+            return manropeFont.status === FontLoader.Ready ? manropeFont.name : "Manrope";
+        if (fontChoice === "google_flex")
+            return googleFlexFont.status === FontLoader.Ready ? googleFlexFont.name : "Google Sans Flex";
+        if (fontChoice === "opendyslexic")
+            return openDyslexicFont.status === FontLoader.Ready ? openDyslexicFont.name : "OpenDyslexic";
+        if (fontChoice === "custom")
+            return customFontFamily;
+        if (typeof nativeBridge !== "undefined" && nativeBridge)
+            return nativeBridge.systemFontFamily();
+        return "";
+    }
+    readonly property string fontFamily: defaultFontFamily
+    readonly property string monoFont: monoFontFamily.length > 0 ? monoFontFamily : "monospace"
+
+    property int fontWeight: 400 // 200 to 800
+
+    function fw(isBold) {
+        return isBold ? Math.min(900, Math.max(600, fontWeight + 250)) : fontWeight;
+    }
+
+    function weightName(w) {
+        if (w <= 200) return qsTr("Thin");
+        if (w <= 300) return qsTr("Light");
+        if (w <= 400) return qsTr("Regular");
+        if (w <= 500) return qsTr("Medium");
+        if (w <= 600) return qsTr("SemiBold");
+        if (w <= 700) return qsTr("Bold");
+        return qsTr("Heavy");
+    }
+
+    function syncAppFont() {
+        if (typeof nativeBridge !== "undefined" && nativeBridge)
+            nativeBridge.setApplicationFont(defaultFontFamily, fontWeight);
+    }
+
+    property bool highContrast: false
+
     function getFontFamily() {
-        switch (phosphorWeight) {
-            case "bold": return (fontBold && fontBold.name) ? fontBold.name : "Phosphor-Bold";
-            case "fill": return (fontFill && fontFill.name) ? fontFill.name : "Phosphor-Fill";
-            case "duotone": return (fontDuotone && fontDuotone.name) ? fontDuotone.name : "Phosphor-Duotone";
-            case "light": return (fontLight && fontLight.name) ? fontLight.name : "Phosphor-Light";
-            case "thin": return (fontThin && fontThin.name) ? fontThin.name : "Phosphor-Thin";
-            default: return (fontReg && fontReg.name) ? fontReg.name : "Phosphor";
-        }
+        return iconFont.status === FontLoader.Ready ? iconFont.name : iconFontFile;
     }
 
     readonly property bool isDark: themeMode === "dark" ? true
         : (themeMode === "light" ? false
         : ((typeof core !== "undefined" && core && typeof core.is_dark === "boolean") ? core.is_dark
-        : ((Application.styleHints && Application.styleHints.colorScheme === Qt.Light) ? false : true)))
+        : false))
 
     readonly property var wallpaperData: {
         try {
@@ -131,343 +459,123 @@ Item {
         }
     }
 
-    readonly property var palettes: ({
-        // Unia Breathe (Oxygen Theme family): deep emerald ground, emerald accent.
-        // Dark follows the shell (quickshell/theme/Theme.qml), light follows Vision DesignSystem.
-        "unia": {
-            darkBg: "#0b2a26",
-            darkSurfaceLowest: "#082320",
-            darkSurfaceLow: "#0e302b",
-            darkSurface: "#113631",
-            darkSurfaceHigh: "#173f39",
-            darkSurfaceHighest: "#1e4a43",
-            darkPrimary: "#10b981",
-            darkFg: "#04231a",
-            darkContainer: "#11573f",
-            darkContainerFg: "#c8f5e3",
-            darkSecondaryContainer: "#1a463e",
-            darkSecondaryContainerFg: "#eaf6f0",
-            darkTertiaryContainer: "#23453f",
-            darkTextMain: "#eaf6f0",
-            darkTextMuted: "#bfe3d5",
-            darkOutline: "#6f9488",
-            darkOutlineVariant: "#2b524a",
+    function wp(key, fallback, isDarkTheme) {
+        if (!wallpaperData || typeof wallpaperData !== "object") return fallback;
+        if (isDarkTheme && wallpaperData.dark && wallpaperData.dark[key]) return wallpaperData.dark[key];
+        if (!isDarkTheme && wallpaperData.light && wallpaperData.light[key]) return wallpaperData.light[key];
+        if (isDarkTheme && wallpaperData[key]) return wallpaperData[key];
+        if (!isDarkTheme && wallpaperData["light_" + key]) return wallpaperData["light_" + key];
+        return fallback;
+    }
 
-            lightBg: "#f2f8f5",
-            lightSurfaceLowest: "#ffffff",
-            lightSurfaceLow: "#ebf4f0",
-            lightSurface: "#e3eee9",
-            lightSurfaceHigh: "#d9e7e1",
-            lightSurfaceHighest: "#cfe0d9",
-            lightPrimary: "#35775f",
-            lightFg: "#ffffff",
-            lightContainer: "#c9efe0",
-            lightContainerFg: "#10221c",
-            lightSecondaryContainer: "#d6ebe2",
-            lightSecondaryContainerFg: "#10221c",
-            lightTertiaryContainer: "#e0eedf",
-            lightTextMain: "#10221c",
-            lightTextMuted: "#46605a",
-            lightOutline: "#6f8a82",
-            lightOutlineVariant: "#bfd3cb"
-        },
-        "wallpaper": {
-            darkBg: (wallpaperData && wallpaperData.background) ? wallpaperData.background : "#121214",
-            darkSurfaceLowest: (wallpaperData && wallpaperData.surface_container_lowest) ? wallpaperData.surface_container_lowest : ((wallpaperData && wallpaperData.background) ? wallpaperData.background : "#0d0e0f"),
-            darkSurfaceLow: (wallpaperData && wallpaperData.surface_container_low) ? wallpaperData.surface_container_low : ((wallpaperData && wallpaperData.surface_container) ? wallpaperData.surface_container : "#18191a"),
-            darkSurface: (wallpaperData && wallpaperData.surface_container) ? wallpaperData.surface_container : "#1e2021",
-            darkSurfaceHigh: (wallpaperData && wallpaperData.surface_container_high) ? wallpaperData.surface_container_high : "#282a2b",
-            darkSurfaceHighest: (wallpaperData && wallpaperData.surface_container_highest) ? wallpaperData.surface_container_highest : "#333537",
-            darkPrimary: (wallpaperData && wallpaperData.primary) ? wallpaperData.primary : "#cfc6ab",
-            darkFg: (wallpaperData && wallpaperData.on_primary) ? wallpaperData.on_primary : "#201b0a",
-            darkContainer: (wallpaperData && wallpaperData.primary_container) ? wallpaperData.primary_container : "#4c4732",
-            darkContainerFg: (wallpaperData && wallpaperData.on_primary_container) ? wallpaperData.on_primary_container : "#ece2c6",
-            darkSecondaryContainer: (wallpaperData && wallpaperData.secondary_container) ? wallpaperData.secondary_container : "#454336",
-            darkSecondaryContainerFg: (wallpaperData && wallpaperData.on_secondary_container) ? wallpaperData.on_secondary_container : "#ece2c6",
-            darkTertiaryContainer: (wallpaperData && wallpaperData.tertiary_container) ? wallpaperData.tertiary_container : "#524332",
-            darkTextMain: (wallpaperData && wallpaperData.on_surface) ? wallpaperData.on_surface : "#e4e2de",
-            darkTextMuted: (wallpaperData && wallpaperData.on_surface_variant) ? wallpaperData.on_surface_variant : "#c8c6c0",
-            darkOutline: (wallpaperData && wallpaperData.outline) ? wallpaperData.outline : "#92908a",
-            darkOutlineVariant: (wallpaperData && wallpaperData.outline_variant) ? wallpaperData.outline_variant : "#484742",
+    // Unia Breathe Desktop's palette: deep emerald ground, emerald accent. Dark follows the shell
+    // (quickshell/theme/Theme.qml), light follows Vision DesignSystem. It is the only built-in palette;
+    // any other accent is derived from it (see activePalette), as Unia's own theme does.
+    readonly property color defaultAccent: "#10b981"
+    readonly property var uniaPalette: ({
+        darkBg: "#0b2a26",
+        darkSurfaceLowest: "#082320",
+        darkSurfaceLow: "#0e302b",
+        darkSurface: "#113631",
+        darkSurfaceHigh: "#173f39",
+        darkSurfaceHighest: "#1e4a43",
+        darkPrimary: "#10b981",
+        darkFg: "#04231a",
+        darkContainer: "#11573f",
+        darkContainerFg: "#c8f5e3",
+        darkSecondaryContainer: "#1a463e",
+        darkSecondaryContainerFg: "#eaf6f0",
+        darkTertiaryContainer: "#23453f",
+        darkTextMain: "#eaf6f0",
+        darkTextMuted: "#bfe3d5",
+        darkOutline: "#6f9488",
+        darkOutlineVariant: "#2b524a",
 
-            lightBg: "#fef8f4",
-            lightSurfaceLowest: "#ffffff",
-            lightSurfaceLow: "#f9f2ec",
-            lightSurface: "#f3ece4",
-            lightSurfaceHigh: "#ede5dc",
-            lightSurfaceHighest: "#e7ded4",
-            lightPrimary: (wallpaperData && wallpaperData.inverse_primary) ? wallpaperData.inverse_primary : ((wallpaperData && wallpaperData.primary) ? wallpaperData.primary : "#655e48"),
-            lightFg: "#ffffff",
-            lightContainer: (wallpaperData && wallpaperData.primary_container) ? wallpaperData.primary_container : "#ece2c6",
-            lightContainerFg: (wallpaperData && wallpaperData.on_primary_container) ? wallpaperData.on_primary_container : "#201b0a",
-            lightSecondaryContainer: (wallpaperData && wallpaperData.secondary_container) ? wallpaperData.secondary_container : "#ece2c6",
-            lightSecondaryContainerFg: (wallpaperData && wallpaperData.on_secondary_container) ? wallpaperData.on_secondary_container : "#201b0a",
-            lightTertiaryContainer: (wallpaperData && wallpaperData.tertiary_container) ? wallpaperData.tertiary_container : "#f0ddd0",
-            lightTextMain: "#1d1c16",
-            lightTextMuted: "#494740",
-            lightOutline: "#7a7770",
-            lightOutlineVariant: "#cbc7be"
-        },
-        "lavender": {
-            darkBg: "#121214",
-            darkSurfaceLowest: "#0d0e0f",
-            darkSurfaceLow: "#18181b",
-            darkSurface: "#1f1f23",
-            darkSurfaceHigh: "#29292f",
-            darkSurfaceHighest: "#35343c",
-            darkPrimary: "#d0bcff",
-            darkFg: "#381e72",
-            darkContainer: "#4f378b",
-            darkContainerFg: "#eaddff",
-            darkSecondaryContainer: "#4a4458",
-            darkSecondaryContainerFg: "#eaddff",
-            darkTertiaryContainer: "#633b48",
-            darkTextMain: "#e6e6e8",
-            darkTextMuted: "#cac4d0",
-            darkOutline: "#938f99",
-            darkOutlineVariant: "#49454f",
-
-            lightBg: "#faf8fc",
-            lightSurfaceLowest: "#ffffff",
-            lightSurfaceLow: "#f4eef7",
-            lightSurface: "#eee8f1",
-            lightSurfaceHigh: "#e8e2eb",
-            lightSurfaceHighest: "#e2dce5",
-            lightPrimary: "#65558f",
-            lightFg: "#ffffff",
-            lightContainer: "#eaddff",
-            lightContainerFg: "#210f47",
-            lightSecondaryContainer: "#e8def8",
-            lightSecondaryContainerFg: "#210f47",
-            lightTertiaryContainer: "#ffd8e4",
-            lightTextMain: "#1d1b20",
-            lightTextMuted: "#79747e",
-            lightOutline: "#79747e",
-            lightOutlineVariant: "#cac4d0"
-        },
-        "amber": {
-            darkBg: "#131315",
-            darkSurfaceLowest: "#0d0e0f",
-            darkSurfaceLow: "#19181a",
-            darkSurface: "#212023",
-            darkSurfaceHigh: "#2c2a2f",
-            darkSurfaceHighest: "#38363c",
-            darkPrimary: "#f5bd6d",
-            darkFg: "#432c00",
-            darkContainer: "#5e4100",
-            darkContainerFg: "#ffdea7",
-            darkSecondaryContainer: "#423420",
-            darkSecondaryContainerFg: "#ffdea7",
-            darkTertiaryContainer: "#593a20",
-            darkTextMain: "#f2ede8",
-            darkTextMuted: "#c8beaf",
-            darkOutline: "#8f8576",
-            darkOutlineVariant: "#443f38",
-
-            lightBg: "#fdf8f4",
-            lightSurfaceLowest: "#ffffff",
-            lightSurfaceLow: "#f7efe7",
-            lightSurface: "#ede4db",
-            lightSurfaceHigh: "#e2d8cd",
-            lightSurfaceHighest: "#d6cbc0",
-            lightPrimary: "#825500",
-            lightFg: "#ffffff",
-            lightContainer: "#ffdea7",
-            lightContainerFg: "#2a1800",
-            lightSecondaryContainer: "#fae7cb",
-            lightSecondaryContainerFg: "#432c00",
-            lightTertiaryContainer: "#ffdcc1",
-            lightTextMain: "#221b14",
-            lightTextMuted: "#6b6256",
-            lightOutline: "#867b6e",
-            lightOutlineVariant: "#d4c8ba"
-        },
-        "catppuccin": {
-            darkBg: "#1e1e2e",
-            darkSurfaceLowest: "#11111b",
-            darkSurfaceLow: "#181825",
-            darkSurface: "#24273a",
-            darkSurfaceHigh: "#313244",
-            darkSurfaceHighest: "#45475a",
-            darkPrimary: "#cba6f7",
-            darkFg: "#11111b",
-            darkContainer: "#45475a",
-            darkContainerFg: "#cdd6f4",
-            darkSecondaryContainer: "#36384d",
-            darkSecondaryContainerFg: "#89b4fa",
-            darkTertiaryContainer: "#5e3f53",
-            darkTextMain: "#cdd6f4",
-            darkTextMuted: "#a6adc8",
-            darkOutline: "#7f849c",
-            darkOutlineVariant: "#313244",
-
-            lightBg: "#eff1f5",
-            lightSurfaceLowest: "#ffffff",
-            lightSurfaceLow: "#e6e9ef",
-            lightSurface: "#dce0e8",
-            lightSurfaceHigh: "#ccd0da",
-            lightSurfaceHighest: "#bcc0cc",
-            lightPrimary: "#8839ef",
-            lightFg: "#ffffff",
-            lightContainer: "#dce0e8",
-            lightContainerFg: "#8839ef",
-            lightSecondaryContainer: "#d2d7e6",
-            lightSecondaryContainerFg: "#1e66f5",
-            lightTertiaryContainer: "#f4ccd4",
-            lightTextMain: "#4c4f69",
-            lightTextMuted: "#6c6f85",
-            lightOutline: "#9ca0b0",
-            lightOutlineVariant: "#ccd0da"
-        },
-        "nord": {
-            darkBg: "#2e3440",
-            darkSurfaceLowest: "#1e222a",
-            darkSurfaceLow: "#242933",
-            darkSurface: "#353c4a",
-            darkSurfaceHigh: "#3b4252",
-            darkSurfaceHighest: "#434c5e",
-            darkPrimary: "#88c0d0",
-            darkFg: "#2e3440",
-            darkContainer: "#434c5e",
-            darkContainerFg: "#eceff4",
-            darkSecondaryContainer: "#3d4757",
-            darkSecondaryContainerFg: "#88c0d0",
-            darkTertiaryContainer: "#533a41",
-            darkTextMain: "#eceff4",
-            darkTextMuted: "#d8dee9",
-            darkOutline: "#4c566a",
-            darkOutlineVariant: "#3b4252",
-
-            lightBg: "#eceff4",
-            lightSurfaceLowest: "#ffffff",
-            lightSurfaceLow: "#e5e9f0",
-            lightSurface: "#d8dee9",
-            lightSurfaceHigh: "#cbd3df",
-            lightSurfaceHighest: "#bcc6d5",
-            lightPrimary: "#5e81ac",
-            lightFg: "#ffffff",
-            lightContainer: "#d8dee9",
-            lightContainerFg: "#2e3440",
-            lightSecondaryContainer: "#d8e1eb",
-            lightSecondaryContainerFg: "#3b5b84",
-            lightTertiaryContainer: "#edd1ce",
-            lightTextMain: "#2e3440",
-            lightTextMuted: "#4c566a",
-            lightOutline: "#7d899e",
-            lightOutlineVariant: "#d8dee9"
-        },
-        "tokyonight": {
-            darkBg: "#1a1b26",
-            darkSurfaceLowest: "#13141c",
-            darkSurfaceLow: "#16161e",
-            darkSurface: "#1f2335",
-            darkSurfaceHigh: "#24283b",
-            darkSurfaceHighest: "#292e42",
-            darkPrimary: "#7aa2f7",
-            darkFg: "#15161e",
-            darkContainer: "#292e42",
-            darkContainerFg: "#c0caf5",
-            darkSecondaryContainer: "#28334d",
-            darkSecondaryContainerFg: "#7dcfff",
-            darkTertiaryContainer: "#522e3e",
-            darkTextMain: "#c0caf5",
-            darkTextMuted: "#9aa5ce",
-            darkOutline: "#565f89",
-            darkOutlineVariant: "#24283b",
-
-            lightBg: "#d5d6db",
-            lightSurfaceLowest: "#ffffff",
-            lightSurfaceLow: "#cbccd1",
-            lightSurface: "#c4c8da",
-            lightSurfaceHigh: "#b4b8cb",
-            lightSurfaceHighest: "#a4a8bc",
-            lightPrimary: "#3d59a1",
-            lightFg: "#ffffff",
-            lightContainer: "#c4c8da",
-            lightContainerFg: "#1a1b26",
-            lightSecondaryContainer: "#c5cce4",
-            lightSecondaryContainerFg: "#2e4580",
-            lightTertiaryContainer: "#e1bec6",
-            lightTextMain: "#343b58",
-            lightTextMuted: "#565a6e",
-            lightOutline: "#79809f",
-            lightOutlineVariant: "#c4c8da"
-        },
-        "gruvbox": {
-            darkBg: "#282828",
-            darkSurfaceLowest: "#141617",
-            darkSurfaceLow: "#1d2021",
-            darkSurface: "#32302f",
-            darkSurfaceHigh: "#3c3836",
-            darkSurfaceHighest: "#504945",
-            darkPrimary: "#fabd2f",
-            darkFg: "#1d2021",
-            darkContainer: "#504945",
-            darkContainerFg: "#fabd2f",
-            darkSecondaryContainer: "#453b30",
-            darkSecondaryContainerFg: "#fe8019",
-            darkTertiaryContainer: "#552825",
-            darkTextMain: "#ebdbb2",
-            darkTextMuted: "#a89984",
-            darkOutline: "#7c6f64",
-            darkOutlineVariant: "#3c3836",
-
-            lightBg: "#fbf1c7",
-            lightSurfaceLowest: "#ffffff",
-            lightSurfaceLow: "#f2e5bc",
-            lightSurface: "#ebdbb2",
-            lightSurfaceHigh: "#d5c4a1",
-            lightSurfaceHighest: "#bdae93",
-            lightPrimary: "#b57614",
-            lightFg: "#ffffff",
-            lightContainer: "#ebdbb2",
-            lightContainerFg: "#282828",
-            lightSecondaryContainer: "#e5d4a8",
-            lightSecondaryContainerFg: "#8f3f05",
-            lightTertiaryContainer: "#ecc8b8",
-            lightTextMain: "#282828",
-            lightTextMuted: "#7c6f64",
-            lightOutline: "#8a7b6b",
-            lightOutlineVariant: "#d5c4a1"
-        },
-        "rosepine": {
-            darkBg: "#191724",
-            darkSurfaceLowest: "#0f0e17",
-            darkSurfaceLow: "#14121e",
-            darkSurface: "#1f1d2e",
-            darkSurfaceHigh: "#26233a",
-            darkSurfaceHighest: "#393552",
-            darkPrimary: "#ebbcba",
-            darkFg: "#191724",
-            darkContainer: "#31748f",
-            darkContainerFg: "#e0def4",
-            darkSecondaryContainer: "#2d283e",
-            darkSecondaryContainerFg: "#9ccfd8",
-            darkTertiaryContainer: "#492b3a",
-            darkTextMain: "#e0def4",
-            darkTextMuted: "#908caa",
-            darkOutline: "#6e6a86",
-            darkOutlineVariant: "#26233a",
-
-            lightBg: "#faf4ed",
-            lightSurfaceLowest: "#ffffff",
-            lightSurfaceLow: "#f2e9de",
-            lightSurface: "#fffaf3",
-            lightSurfaceHigh: "#f2e9e1",
-            lightSurfaceHighest: "#dfdad9",
-            lightPrimary: "#d7827e",
-            lightFg: "#ffffff",
-            lightContainer: "#f2e9de",
-            lightContainerFg: "#575279",
-            lightSecondaryContainer: "#e9e3d9",
-            lightSecondaryContainerFg: "#286983",
-            lightTertiaryContainer: "#ecd1d7",
-            lightTextMain: "#575279",
-            lightTextMuted: "#797593",
-            lightOutline: "#8a8597",
-            lightOutlineVariant: "#dfdad9"
-        }
+        lightBg: "#f2f8f5",
+        lightSurfaceLowest: "#ffffff",
+        lightSurfaceLow: "#ebf4f0",
+        lightSurface: "#e3eee9",
+        lightSurfaceHigh: "#d9e7e1",
+        lightSurfaceHighest: "#cfe0d9",
+        lightPrimary: "#35775f",
+        lightFg: "#ffffff",
+        lightContainer: "#c9efe0",
+        lightContainerFg: "#10221c",
+        lightSecondaryContainer: "#d6ebe2",
+        lightSecondaryContainerFg: "#10221c",
+        lightTertiaryContainer: "#e0eedf",
+        lightTextMain: "#10221c",
+        lightTextMuted: "#46605a",
+        lightOutline: "#6f8a82",
+        lightOutlineVariant: "#bfd3cb"
     })
+
+    // The accent in use (Settings → Interface → Color palette) and the palettes the user saved,
+    // [{ id, name, accent }]. accentName is the saved palette in use: "unia", an id, or "" for an
+    // accent picked but not saved.
+    property string accentColor: defaultAccent
+    property var savedPalettes: []
+    function savePalette(name) {
+        var id = "p" + Date.now();
+        savedPalettes = savedPalettes.concat([{ id: id, name: name, accent: String(accentColor) }]);
+        accentName = id;
+    }
+    function removePalette(id) {
+        savedPalettes = savedPalettes.filter(function(p) { return p.id !== id; });
+        if (accentName === id)
+            usePalette("unia");
+    }
+    function usePalette(id) {
+        if (id === "unia") {
+            accentColor = defaultAccent;
+        } else {
+            var p = savedPalettes.find(function(x) { return x.id === id; });
+            if (!p)
+                return;
+            accentColor = p.accent;
+        }
+        accentName = id;
+    }
+    function pickAccent(c) {
+        accentColor = "#" + hex(c);
+        var match = sameColor(accentColor, defaultAccent) ? "unia" : "";
+        for (var i = 0; !match && i < savedPalettes.length; ++i)
+            if (sameColor(savedPalettes[i].accent, accentColor))
+                match = savedPalettes[i].id;
+        accentName = match;
+    }
+    function hex(c) {
+        c = Qt.lighter(c, 1);
+        var h = function(v) { var s = Math.round(v * 255).toString(16); return s.length < 2 ? "0" + s : s; };
+        return h(c.r) + h(c.g) + h(c.b);
+    }
+    function sameColor(a, b) { return hex(a) === hex(b); }
+    // Relative luminance (WCAG): picks the text colour on the accent.
+    function luminance(c) {
+        c = Qt.lighter(c, 1);
+        var l = function(v) { return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4); };
+        return 0.2126 * l(c.r) + 0.7152 * l(c.g) + 0.0722 * l(c.b);
+    }
+
+    // The Unia palette turned towards the accent: every colour keeps its lightness and moves its hue
+    // by the accent's distance from emerald; greys (low saturation) drain the palette of colour.
+    readonly property var activePalette: {
+        var acc = Qt.lighter(accentColor, 1);
+        var base = Qt.lighter(defaultAccent, 1);
+        var shift = acc.hslSaturation < 0.08 ? 0 : acc.hslHue - base.hslHue;
+        var satK = Math.min(1, acc.hslSaturation / base.hslSaturation);
+        var tint = function(c) {
+            c = Qt.lighter(c, 1);
+            return Qt.hsla((c.hslHue + shift + 1) % 1, c.hslSaturation * satK, c.hslLightness, 1);
+        };
+        var out = {};
+        for (var k in uniaPalette)
+            out[k] = tint(uniaPalette[k]);
+        out.darkPrimary = acc;
+        out.darkFg = luminance(acc) > 0.2 ? tint("#04231a") : Qt.rgba(1, 1, 1, 1);
+        out.lightPrimary = luminance(acc) > 0.25 ? Qt.darker(acc, 1.6) : acc;
+        return out;
+    }
 
     // Phosphor glyph codepoints (generated from the bundled font's ligature
     // table), shared by every LoafIcon: one copy instead of one per icon.
@@ -1992,61 +2100,82 @@ Item {
         "": "\uee82"
     })
 
-    readonly property var activePalette: palettes[accentName] || palettes["unia"]
-
-    // Frosted glass: the window ground and the panels resting on it are translucent and
-    // Hyprland blurs what is behind the window. 1.0 is opaque; Unia's standard glass is 0.35.
-    // Light grounds stay denser so dark text keeps its contrast.
-    // Glass needs the compositor's blur: with it switched off (Unia: Theme → Blur) the window is solid,
-    // otherwise it would just be see-through. Checked every couple of seconds, so the switch applies live.
-    property real glassOpacity: 0.35
-    readonly property bool compositorBlur: typeof core === "undefined" || !core || core.compositor_blur
-    readonly property bool solid: glassOpacity >= 1.0 || !compositorBlur
-    readonly property real glassAlpha: solid ? 1.0 : isDark ? glassOpacity : glassOpacity + (1 - glassOpacity) * 0.4
-    Timer {
-        interval: 2000
-        running: theme.glassOpacity < 1.0 && typeof core !== "undefined" && !!core
-        repeat: true
-        onTriggered: core.refresh_compositor_blur()
-    }
-    function glass(c) { return Qt.alpha(c, glassAlpha) }
 
     // Background & Surfaces
-    readonly property color background: glass(isDark ? activePalette.darkBg : activePalette.lightBg)
-    readonly property color surfaceDim: isDark ? activePalette.darkBg : activePalette.lightSurfaceLow
-    readonly property color surface: isDark ? activePalette.darkBg : activePalette.lightBg
-    readonly property color surfaceBright: isDark ? activePalette.darkSurfaceHighest : activePalette.lightSurfaceLowest
-    readonly property color surfaceContainerLowest: glass(isDark ? activePalette.darkSurfaceLowest : activePalette.lightSurfaceLowest)
-    readonly property color surfaceContainerLow: glass(isDark ? activePalette.darkSurfaceLow : activePalette.lightSurfaceLow)
-    readonly property color surfaceContainer: glass(isDark ? activePalette.darkSurface : activePalette.lightSurface)
-    readonly property color surfaceContainerHigh: isDark ? activePalette.darkSurfaceHigh : activePalette.lightSurfaceHigh
-    readonly property color surfaceContainerHighest: isDark ? activePalette.darkSurfaceHighest : activePalette.lightSurfaceHighest
+    readonly property color background: highContrast
+        ? (isDark ? "#000000" : "#ffffff")
+        : (isDark ? activePalette.darkBg : activePalette.lightBg)
+    readonly property color surfaceDim: highContrast
+        ? (isDark ? "#080808" : "#f0f0f0")
+        : (isDark ? activePalette.darkBg : activePalette.lightSurfaceLow)
+    readonly property color surface: highContrast
+        ? (isDark ? "#0c0c0e" : "#f8f8fa")
+        : (isDark ? activePalette.darkBg : activePalette.lightBg)
+    readonly property color surfaceBright: highContrast
+        ? (isDark ? "#2a2a30" : "#ffffff")
+        : (isDark ? activePalette.darkSurfaceHighest : activePalette.lightSurfaceLowest)
+    readonly property color surfaceContainerLowest: highContrast
+        ? (isDark ? "#050505" : "#ffffff")
+        : (isDark ? activePalette.darkSurfaceLowest : activePalette.lightSurfaceLowest)
+    readonly property color surfaceContainerLow: highContrast
+        ? (isDark ? "#101014" : "#f2f2f4")
+        : (isDark ? activePalette.darkSurfaceLow : activePalette.lightSurfaceLow)
+    readonly property color surfaceContainer: highContrast
+        ? (isDark ? "#18181c" : "#e8e8ec")
+        : (isDark ? activePalette.darkSurface : activePalette.lightSurface)
+    readonly property color surfaceContainerHigh: highContrast
+        ? (isDark ? "#222228" : "#dedee4")
+        : (isDark ? activePalette.darkSurfaceHigh : activePalette.lightSurfaceHigh)
+    readonly property color surfaceContainerHighest: highContrast
+        ? (isDark ? "#2c2c34" : "#d4d4dc")
+        : (isDark ? activePalette.darkSurfaceHighest : activePalette.lightSurfaceHighest)
 
     // Primary Accents
-    readonly property color primary: isDark ? activePalette.darkPrimary : activePalette.lightPrimary
+    readonly property color rawPrimary: isDark ? activePalette.darkPrimary : activePalette.lightPrimary
+    readonly property color primary: highContrast
+        ? (isDark ? Qt.lighter(rawPrimary, 1.25) : Qt.darker(rawPrimary, 1.35))
+        : rawPrimary
     readonly property color primaryFg: isDark ? activePalette.darkFg : activePalette.lightFg
     readonly property color primaryContainer: isDark ? activePalette.darkContainer : activePalette.lightContainer
-    readonly property color primaryContainerFg: isDark ? activePalette.darkContainerFg : activePalette.lightContainerFg
+    readonly property color primaryContainerFg: highContrast
+        ? (isDark ? "#ffffff" : "#000000")
+        : (isDark ? activePalette.darkContainerFg : activePalette.lightContainerFg)
 
     // Secondary Accents
     readonly property color secondaryContainer: isDark ? activePalette.darkSecondaryContainer : activePalette.lightSecondaryContainer
-    readonly property color secondaryContainerFg: isDark ? activePalette.darkSecondaryContainerFg : activePalette.lightSecondaryContainerFg
+    readonly property color secondaryContainerFg: highContrast
+        ? (isDark ? "#ffffff" : "#000000")
+        : (isDark ? activePalette.darkSecondaryContainerFg : activePalette.lightSecondaryContainerFg)
     readonly property color tertiaryContainer: isDark ? activePalette.darkTertiaryContainer : activePalette.lightTertiaryContainer
 
     // Text & Outlines
-    readonly property color textMain: isDark ? activePalette.darkTextMain : activePalette.lightTextMain
-    readonly property color textMuted: isDark ? activePalette.darkTextMuted : activePalette.lightTextMuted
-    readonly property color outline: isDark ? activePalette.darkOutline : activePalette.lightOutline
-    readonly property color outlineVariant: isDark ? activePalette.darkOutlineVariant : activePalette.lightOutlineVariant
+    readonly property color textMain: highContrast
+        ? (isDark ? "#ffffff" : "#000000")
+        : (isDark ? activePalette.darkTextMain : activePalette.lightTextMain)
+    readonly property color textMuted: highContrast
+        ? (isDark ? "#e4e4e8" : "#242428")
+        : (isDark ? activePalette.darkTextMuted : activePalette.lightTextMuted)
+    readonly property color outline: highContrast
+        ? (isDark ? "#dcdce2" : "#24242c")
+        : (isDark ? activePalette.darkOutline : activePalette.lightOutline)
+    readonly property color outlineVariant: highContrast
+        ? (isDark ? "#8e8e98" : "#60606a")
+        : (isDark ? activePalette.darkOutlineVariant : activePalette.lightOutlineVariant)
 
     // Semantic component tokens (derived so components never pick raw surface tokens)
     readonly property color menuSurface: isDark ? activePalette.darkSurfaceHigh : activePalette.lightSurfaceLowest
     readonly property color hoverOverlay: isDark ? Qt.rgba(1.0, 1.0, 1.0, 0.08) : Qt.rgba(0.0, 0.0, 0.0, 0.06)
     readonly property color activeOverlay: isDark ? Qt.rgba(1.0, 1.0, 1.0, 0.14) : Qt.rgba(0.0, 0.0, 0.0, 0.10)
     readonly property color menuItemHover: isDark ? Qt.rgba(1.0, 1.0, 1.0, 0.09) : Qt.rgba(0.0, 0.0, 0.0, 0.05)
-    readonly property color danger: isDark ? "#f2b8b5" : "#ba1a1a"
-    readonly property color dangerContainer: isDark ? "#381e1e" : "#ffdad6"
-    readonly property color dangerFg: danger
+    readonly property color scrim: isDark ? Qt.rgba(0.0, 0.0, 0.0, 0.60) : Qt.rgba(0.0, 0.0, 0.0, 0.35)
+    readonly property color shadow: isDark ? Qt.rgba(0.0, 0.0, 0.0, 0.45) : Qt.rgba(0.0, 0.0, 0.0, 0.14)
+    readonly property color selectionBox: Qt.rgba(primary.r, primary.g, primary.b, isDark ? 0.24 : 0.16)
+    readonly property color syntaxString: isDark ? tertiaryContainer : primary
+    readonly property color syntaxNumber: isDark ? secondaryContainerFg : primary
+    readonly property color syntaxKeyword: primary
+    readonly property color danger: isDark ? "#e8a191" : "#a33d2a"
+    readonly property color dangerContainer: isDark ? "#4d211a" : "#f5ded6"
+    readonly property color dangerFg: isDark ? "#690005" : "#ffffff"
     readonly property color track: isDark ? activePalette.darkSurfaceHighest : activePalette.lightSurfaceHigh
     readonly property color borderSubtle: outlineVariant
     readonly property color separator: outlineVariant
@@ -2081,12 +2210,44 @@ Item {
 
         value = readSetting("themeMode");
         if (value.length > 0) themeMode = value;
+        value = readSetting("language");
+        if (value.length > 0) language = value;
+        value = readSetting("backgroundOpacity");
+        if (value.trim().length > 0 && isFinite(Number(value)))
+            backgroundOpacity = Math.max(0.0, Math.min(1.0, Number(value)));
+        value = readSetting("panelOpacity");
+        if (value.trim().length > 0 && isFinite(Number(value)))
+            panelOpacity = Math.max(0.0, Math.min(1.0, Number(value)));
+        value = readSetting("customIcons");
+        if (value.length > 0) {
+            try { customIcons = JSON.parse(value); } catch (e) { customIcons = {}; }
+        }
+        value = readSetting("savedPalettes");
+        if (value.length > 0) {
+            try { savedPalettes = JSON.parse(value); } catch (e) { savedPalettes = []; }
+        }
+        value = readSetting("accentColor");
+        if (value.length > 0) accentColor = value;
         value = readSetting("accentName");
-        if (value.length > 0) accentName = value;
-        if (accentName === "wallpaper" && typeof core !== "undefined" && core)
-            core.reload_wallpaper_colors();
+        // Loaf's own palettes are gone; anything but Unia or a saved palette is a picked accent.
+        if (value === "unia" || savedPalettes.some(function(p) { return p.id === value; }))
+            accentName = value;
+        else if (value.length > 0)
+            accentName = sameColor(accentColor, defaultAccent) ? "unia" : "";
+        value = readSetting("wallpaperPaletteSource");
+        if (value.length > 0) wallpaperPaletteSource = value;
+        if (typeof core !== "undefined" && core) {
+            try {
+                availableWallpaperPaletteSources =
+                    JSON.parse(core.wallpaperPaletteSourcesJson() || "[]");
+            } catch (e) {
+                availableWallpaperPaletteSources = [];
+            }
+        }
         value = readSetting("iconSource");
         if (value.length > 0) iconSource = value;
+        value = readSetting("customIconTheme");
+        if (value.length > 0) customIconTheme = value;
         value = readSetting("phosphorWeight");
         if (value.length > 0) phosphorWeight = value;
         value = readSetting("dragAction");
@@ -2094,12 +2255,40 @@ Item {
 
         value = readSetting("showThumbnails");
         if (value.length > 0) showThumbnails = (value === "true");
+        value = readSetting("thumbnailShape");
+        if (value === "square" || value === "original") thumbnailShape = value;
         value = readSetting("showExperimentalIcons");
         if (value.length > 0) showExperimentalIcons = (value === "true");
         value = readSetting("showAdvancedArchives");
         if (value.length > 0) showAdvancedArchives = (value === "true");
         value = readSetting("experimentalPcCustomization");
         if (value.length > 0) experimentalPcCustomization = (value === "true");
+
+        value = readSetting("shareViaLinkEnabled");
+        if (value.length > 0) shareViaLinkEnabled = (value === "true");
+        value = readSetting("smbAutoDiscovery");
+        if (value.length > 0) smbAutoDiscovery = (value !== "false");
+
+        value = readSetting("shareProvider");
+        if (value.length > 0) shareProvider = value;
+
+        value = readSetting("shareCompressFolders");
+        if (value.length > 0) shareCompressFolders = (value === "true");
+
+        value = readSetting("shareCompressFiles");
+        if (value.length > 0) shareCompressFiles = (value === "true");
+
+        value = readSetting("shareCompressFormat");
+        if (value.length > 0) shareCompressFormat = value;
+
+        value = readSetting("sharePassword");
+        if (value.length > 0) sharePassword = value;
+
+        value = readSetting("shareExpirationHours");
+        if (value.length > 0) shareExpirationHours = parseInt(value) || 0;
+
+        value = readSetting("shareThrottleKbps");
+        if (value.length > 0) shareThrottleKbps = parseInt(value) || 0;
         value = readSetting("lowPower");
         if (value.length > 0) lowPowerSetting = value;
         value = readSetting("reduceMotion");
@@ -2120,13 +2309,63 @@ Item {
         }
         value = readSetting("hideTrashWhenEmpty");
         if (value.length > 0) hideTrashWhenEmpty = (value === "true");
-        value = readSetting("customIcons");
-        if (value.length > 0) {
-            try { customIcons = JSON.parse(value); } catch (e) { customIcons = {}; }
+        value = readSetting("toolbarOperations");
+        if (value.length > 0) toolbarOperations = value;
+        value = readSetting("showNewTabButton");
+        if (value.length > 0) showNewTabButton = (value === "true");
+        value = readSetting("showNewWindowButton");
+        if (value.length > 0) showNewWindowButton = (value === "true");
+        // Migrate the old combined toggle (pre per-button setting).
+        value = readSetting("showNewTabWindowButtons");
+        if (value.length > 0 && readSetting("showNewTabButton").length === 0) {
+            showNewTabButton = (value === "true");
+            showNewWindowButton = (value === "true");
         }
-        value = readSetting("glassOpacity");
-        if (value.length > 0) glassOpacity = parseFloat(value) || 1.0;
+        value = readSetting("pathBarMode");
+        if (value.length > 0) pathBarMode = value;
+        value = readSetting("openFolderMode");
+        if (value.length > 0) openFolderMode = value;
+        value = readSetting("archiveOpenAction");
+        if (value === "browse" || value === "extract" || value === "open") archiveOpenAction = value;
+        value = readSetting("keybindings");
+        if (value.length > 0) {
+            try { keybindings = JSON.parse(value); } catch (e) { keybindings = {}; }
+        }
+        value = readSetting("clickToOpen");
+        if (value.length > 0) clickToOpen = value;
+        value = readSetting("rangeSelectMode");
+        if (value.length > 0) rangeSelectMode = value;
+        value = readSetting("iconColorMode");
+        if (value === "folders" || value === "files" || value === "all" || value === "none")
+            iconColorMode = value;
+        value = readSetting("iconColor");
+        if (value === "primary" || value === "secondary" || value === "tertiary"
+            || value === "danger" || value === "textMain" || value === "textMuted")
+            iconColor = value;
+        value = readSetting("showOutlines");
+        if (value.length > 0) showOutlines = (value !== "false");
+        value = readSetting("outlineIntensity");
+        if (value.length > 0 && isFinite(parseInt(value)))
+            outlineIntensity = Math.max(0, Math.min(100, parseInt(value)));
+        value = readSetting("showTooltips");
+        if (value.length > 0) showTooltips = (value !== "false");
+        value = readSetting("showBackgroundShapes");
+        if (value.length > 0) showBackgroundShapes = (value !== "false");
+        value = readSetting("fontChoice");
+        if (value.length > 0) fontChoice = value;
+        value = readSetting("customFontFamily");
+        if (value.length > 0) customFontFamily = value;
+        value = readSetting("monoFontFamily");
+        if (value.length > 0) monoFontFamily = value;
+        value = readSetting("density");
+        if (value === "compact" || value === "comfortable" || value === "spacious") density = value;
+        value = readSetting("fontWeight");
+        if (value.length > 0 && isFinite(parseInt(value)))
+            fontWeight = Math.max(200, Math.min(800, parseInt(value)));
+        value = readSetting("highContrast");
+        if (value.length > 0) highContrast = (value === "true");
         loaded = true;
+        syncAppFont();
     }
 
     // Writes are skipped until the stored values have been read.
@@ -2135,18 +2374,39 @@ Item {
     Component.onCompleted: loadSettings()
 
     onThemeModeChanged: writeSetting("themeMode", themeMode)
-    onAccentNameChanged: {
-        writeSetting("accentName", accentName);
+    onBackgroundOpacityChanged: writeSetting("backgroundOpacity", backgroundOpacity)
+    onPanelOpacityChanged: writeSetting("panelOpacity", panelOpacity)
+    onAccentNameChanged: writeSetting("accentName", accentName)
+    onAccentColorChanged: writeSetting("accentColor", accentColor)
+    onSavedPalettesChanged: writeSetting("savedPalettes", JSON.stringify(savedPalettes))
+    onCustomIconsChanged: writeSetting("customIcons", JSON.stringify(customIcons))
+    onWallpaperPaletteSourceChanged: {
+        writeSetting("wallpaperPaletteSource", wallpaperPaletteSource);
         if (accentName === "wallpaper" && typeof core !== "undefined" && core)
             core.reload_wallpaper_colors();
     }
     onIconSourceChanged: writeSetting("iconSource", iconSource)
+    onCustomIconThemeChanged: writeSetting("customIconTheme", customIconTheme)
     onPhosphorWeightChanged: writeSetting("phosphorWeight", phosphorWeight)
     onDragActionChanged: writeSetting("dragAction", dragAction)
     onShowThumbnailsChanged: writeSetting("showThumbnails", showThumbnails)
+    onThumbnailShapeChanged: writeSetting("thumbnailShape", thumbnailShape)
     onShowExperimentalIconsChanged: writeSetting("showExperimentalIcons", showExperimentalIcons)
     onShowAdvancedArchivesChanged: writeSetting("showAdvancedArchives", showAdvancedArchives)
     onExperimentalPcCustomizationChanged: writeSetting("experimentalPcCustomization", experimentalPcCustomization)
+    onShareViaLinkEnabledChanged: writeSetting("shareViaLinkEnabled", shareViaLinkEnabled)
+    onSmbAutoDiscoveryChanged: {
+        writeSetting("smbAutoDiscovery", smbAutoDiscovery);
+        if (typeof core !== "undefined" && core)
+            core.set_smb_discovery_enabled(smbAutoDiscovery);
+    }
+    onShareProviderChanged: writeSetting("shareProvider", shareProvider)
+    onShareCompressFoldersChanged: writeSetting("shareCompressFolders", shareCompressFolders)
+    onShareCompressFilesChanged: writeSetting("shareCompressFiles", shareCompressFiles)
+    onShareCompressFormatChanged: writeSetting("shareCompressFormat", shareCompressFormat)
+    onSharePasswordChanged: writeSetting("sharePassword", sharePassword)
+    onShareExpirationHoursChanged: writeSetting("shareExpirationHours", shareExpirationHours)
+    onShareThrottleKbpsChanged: writeSetting("shareThrottleKbps", shareThrottleKbps)
     onLowPowerSettingChanged: writeSetting("lowPower", lowPowerSetting)
     onReduceMotionSettingChanged: writeSetting("reduceMotion", reduceMotionSetting)
     onZoomIndexChanged: writeSetting("zoomIndex", zoomIndex)
@@ -2156,6 +2416,26 @@ Item {
     onContextMenuModeChanged: writeSetting("contextMenuMode", contextMenuMode)
     onDisabledMenuItemsChanged: writeSetting("disabledMenuItems", JSON.stringify(disabledMenuItems))
     onHideTrashWhenEmptyChanged: writeSetting("hideTrashWhenEmpty", hideTrashWhenEmpty)
-    onGlassOpacityChanged: writeSetting("glassOpacity", glassOpacity)
-    onCustomIconsChanged: writeSetting("customIcons", JSON.stringify(customIcons))
+    onToolbarOperationsChanged: writeSetting("toolbarOperations", toolbarOperations)
+    onShowNewTabButtonChanged: writeSetting("showNewTabButton", showNewTabButton ? "true" : "false")
+    onShowNewWindowButtonChanged: writeSetting("showNewWindowButton", showNewWindowButton ? "true" : "false")
+    onPathBarModeChanged: writeSetting("pathBarMode", pathBarMode)
+    onOpenFolderModeChanged: writeSetting("openFolderMode", openFolderMode)
+    onArchiveOpenActionChanged: writeSetting("archiveOpenAction", archiveOpenAction)
+    onKeybindingsChanged: writeSetting("keybindings", JSON.stringify(keybindings))
+    onClickToOpenChanged: writeSetting("clickToOpen", clickToOpen)
+    onRangeSelectModeChanged: writeSetting("rangeSelectMode", rangeSelectMode)
+    onIconColorModeChanged: writeSetting("iconColorMode", iconColorMode)
+    onIconColorChanged: writeSetting("iconColor", iconColor)
+    onShowOutlinesChanged: writeSetting("showOutlines", showOutlines ? "true" : "false")
+    onOutlineIntensityChanged: writeSetting("outlineIntensity", String(outlineIntensity))
+    onShowTooltipsChanged: writeSetting("showTooltips", showTooltips ? "true" : "false")
+    onShowBackgroundShapesChanged: writeSetting("showBackgroundShapes", showBackgroundShapes ? "true" : "false")
+    onFontChoiceChanged: { writeSetting("fontChoice", fontChoice); syncAppFont(); }
+    onCustomFontFamilyChanged: { writeSetting("customFontFamily", customFontFamily); syncAppFont(); }
+    onMonoFontFamilyChanged: writeSetting("monoFontFamily", monoFontFamily)
+    onDensityChanged: writeSetting("density", density)
+    onFontWeightChanged: { writeSetting("fontWeight", fontWeight); syncAppFont(); }
+    onDefaultFontFamilyChanged: syncAppFont()
+    onHighContrastChanged: writeSetting("highContrast", highContrast ? "true" : "false")
 }

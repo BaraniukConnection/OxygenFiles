@@ -10,12 +10,19 @@ Rectangle {
     id: rail
 
     property bool expanded: false
+    // Portal picker: Settings, This PC, Recent, Starred and Trash have no
+    // meaning there and are hidden.
+    property bool pickerMode: false
     // Id of the highlighted entry ("pc", "settings", "home", "bookmark:/x", ...).
     property string activeId: ""
+    property var focusedButton: null
+    readonly property bool keyboardHasFocus: focusedButton !== null && focusedButton.activeFocus
 
     signal placeClicked(var place, bool newTab)
+    signal driveClicked(var drive, bool newTab)
     signal settingsClicked()
     signal placeMenuRequested(var place, real x, real y)
+    signal driveMenuRequested(var drive, real x, real y)
     signal sidebarMenuRequested(real x, real y)
 
     readonly property var places: {
@@ -26,6 +33,99 @@ Rectangle {
         }
     }
 
+    readonly property var drives: {
+        try {
+            return JSON.parse(core.drives_json || "[]");
+        } catch (e) {
+            return [];
+        }
+    }
+
+    property var cachedEntries: []
+    property string entriesFingerprint: ""
+
+    function rebuildEntries() {
+        var standardPlaces = [];
+        var networkPlaces = [];
+
+        for (var i = 0; i < places.length; ++i) {
+            var p = places[i];
+            if (p.id === "trash")
+                continue;
+            // The picker can only return real files and folders.
+            if (rail.pickerMode && (p.kind === "pc" || p.kind === "recent" || p.kind === "starred" || p.kind === "smb-discovery"))
+                continue;
+            if (p.kind === "network" || p.kind === "smb" || p.kind === "smb-discovery") {
+                networkPlaces.push(p);
+            } else {
+                standardPlaces.push(p);
+            }
+        }
+
+        var availableDrives = drives.filter(function(d) {
+            if (rail.pickerMode && d.provider === "mtp")
+                return false;
+            return true;
+        }).map(function(d) {
+            var iconName = d.icon || (d.provider === "mtp" ? "device-mobile" : (d.is_external ? "usb" : "hard-drive"));
+            var sysIcon = d.provider === "mtp" ? "phone-symbolic" : (d.is_external ? "drive-removable-media" : "drive-harddisk");
+            return {
+                id: "device:" + d.device,
+                kind: "device",
+                name: d.name,
+                icon: iconName,
+                system_icon: sysIcon,
+                path: d.mount_point,
+                drive: d
+            };
+        });
+
+        var newEntries = standardPlaces.concat(availableDrives).concat(networkPlaces);
+        var fp = newEntries.map(function(e) {
+            return (e.id || "") + "|" + (e.name || "") + "|" + (e.path || "") + "|" + (e.drive ? (e.drive.is_mounted ? "1" : "0") : "") + "|" + (e.missing || false) + "|" + (e.connected || false);
+        }).join(";;;");
+
+        if (fp === entriesFingerprint && cachedEntries.length === newEntries.length) {
+            for (var j = 0; j < cachedEntries.length; ++j) {
+                if (cachedEntries[j].drive && newEntries[j] && newEntries[j].drive) {
+                    cachedEntries[j].drive = newEntries[j].drive;
+                }
+            }
+            return;
+        }
+
+        var savedY = placeList ? placeList.contentY : 0;
+        var focusedId = (focusedButton && focusedButton.entryData) ? focusedButton.entryData.id : "";
+        var wasFocused = (focusedButton && focusedButton.activeFocus);
+
+        entriesFingerprint = fp;
+        cachedEntries = newEntries;
+
+        if (placeList) {
+            Qt.callLater(function() {
+                if (placeList) {
+                    placeList.contentY = Math.max(0, Math.min(placeList.contentHeight - placeList.height, savedY));
+                    if (wasFocused && focusedId.length > 0) {
+                        for (var k = 0; k < placeList.count; ++k) {
+                            var item = placeList.itemAtIndex(k);
+                            if (item && item.modelData && item.modelData.id === focusedId && item.button) {
+                                item.button.forceActiveFocus();
+                                break;
+                            }
+                        }
+                    }
+                }
+            });
+        }
+    }
+
+    readonly property var entries: cachedEntries
+
+    onPlacesChanged: { rebuildEntries(); Qt.callLater(updateHighlight); }
+    onDrivesChanged: { rebuildEntries(); Qt.callLater(updateHighlight); }
+    onPickerModeChanged: { rebuildEntries(); Qt.callLater(updateHighlight); }
+    Component.onCompleted: rebuildEntries()
+
     readonly property var trashPlace: {
         for (var i = 0; i < places.length; ++i) {
             if (places[i].id === "trash") return places[i];
@@ -33,10 +133,13 @@ Rectangle {
         return { id: "trash", kind: "trash", name: qsTr("Trash"), path: "trash:///", icon: "trash", system_icon: "user-trash-symbolic" };
     }
 
-    readonly property bool showTrash: !theme.hideTrashWhenEmpty || (typeof core !== "undefined" && core && !core.trash_empty) || (typeof dragManager !== "undefined" && dragManager && dragManager.active)
+    readonly property bool showTrash: !pickerMode
+        && (!theme.hideTrashWhenEmpty || (typeof core !== "undefined" && core && !core.trash_empty) || (typeof dragManager !== "undefined" && dragManager && dragManager.active))
 
     radius: theme.radiusXl
-    color: theme.surfaceContainer
+    color: theme.backdropSurface(theme.surfaceContainer)
+    border.width: 1
+    border.color: theme.outlineAlpha(theme.outlineVariant)
     clip: true
     implicitWidth: expanded ? 200 : 68
     Behavior on implicitWidth { enabled: theme.animate; NumberAnimation { duration: 230; easing.type: Easing.OutCubic } }
@@ -70,7 +173,7 @@ Rectangle {
         y: targetY
 
         Behavior on y {
-            enabled: theme.animate
+            enabled: theme.animate && !placeList.moving && !placeList.flicking
             SpringAnimation { spring: 4.2; damping: 0.38 }
         }
         Behavior on width {
@@ -103,8 +206,15 @@ Rectangle {
             if (filtered[i].id === rail.activeId) {
                 var it = placeList.itemAtIndex(i);
                 if (it) {
-                    var p = it.mapToItem(rail, 0, 0);
-                    selectionHighlight.targetY = p.y;
+                    var btnItem = it.button ? it.button : it;
+                    var p = btnItem.mapToItem(rail, 0, 0);
+                    var listTop = placeList.mapToItem(rail, 0, 0).y;
+                    var listBottom = listTop + placeList.height;
+                    if (p.y < listTop || p.y + it.height > listBottom) {
+                        selectionHighlight.targetY = -100;
+                    } else {
+                        selectionHighlight.targetY = p.y;
+                    }
                     return;
                 }
             }
@@ -234,7 +344,7 @@ Rectangle {
             Layout.preferredHeight: 1
             Layout.leftMargin: 12
             Layout.rightMargin: 12
-            color: theme.separator
+            color: theme.outlineAlpha(theme.separator)
             opacity: 0.45
         }
 
@@ -245,36 +355,67 @@ Rectangle {
             clip: true
             spacing: 6
             boundsBehavior: Flickable.StopAtBounds
-            model: rail.places.filter(function(p) { return p.id !== "trash"; })
+            model: rail.entries
             ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded; width: 6 }
 
-            onContentYChanged: rail.updateHighlight()
+            onContentYChanged: Qt.callLater(rail.updateHighlight)
             onCountChanged: Qt.callLater(rail.updateHighlight)
             Component.onCompleted: Qt.callLater(rail.updateHighlight)
 
-            delegate: RailButton {
+            delegate: Item {
+                id: entry
                 width: placeList.width
                 required property var modelData
                 required property int index
-                iconName: modelData.icon
-                systemIcon: modelData.system_icon
-                customSpec: theme.customIcon("place:" + modelData.id) || (modelData.path ? theme.customIcon(modelData.path) : "")
-                label: modelData.name
-                showLabel: rail.expanded
-                selected: rail.activeId === modelData.id
-                dimmed: modelData.missing === true
-                dropPath: (modelData.kind === "place" || modelData.kind === "bookmark") ? modelData.path : ""
-                accessibleName: modelData.name
-                onClicked: rail.placeClicked(modelData, false)
-                onMiddleClicked: rail.placeClicked(modelData, true)
-                onMenuRequested: function(x, y) { rail.placeMenuRequested(modelData, x, y); }
-                onFilesDropped: function(paths, asCopy) {
-                    if (modelData.kind === "trash")
-                        core.trash_items(JSON.stringify(paths));
-                    else if (dropPath.length > 0)
-                        window.handleDrop(paths, dropPath, asCopy);
+                readonly property bool isDevice: modelData.kind === "device"
+                readonly property bool isStorage: isDevice || (modelData.kind === "network" || modelData.kind === "smb" || modelData.kind === "smb-discovery")
+                readonly property bool prevIsStorage: index > 0 && (placeList.model[index - 1].kind === "device" || placeList.model[index - 1].kind === "network" || placeList.model[index - 1].kind === "smb" || placeList.model[index - 1].kind === "smb-discovery")
+                readonly property real headerHeight: isStorage && !prevIsStorage && index > 0
+                    ? 12 : 0
+                property alias button: entryButton
+                height: 44 + headerHeight
+                Rectangle {
+                    visible: entry.headerHeight > 0
+                    x: 12; width: parent.width - 24; height: 1
+                    color: theme.outlineAlpha(theme.separator); opacity: 0.35
                 }
-                acceptsTrashDrop: modelData.kind === "trash"
+                RailButton {
+                    id: entryButton
+                    entryData: entry.modelData
+                    anchors.bottom: parent.bottom
+                    width: parent.width
+                    iconName: entry.modelData.icon
+                    systemIcon: entry.modelData.system_icon
+                    customSpec: entry.isDevice
+                        ? theme.customIcon(theme.driveIconKey(entry.modelData.drive))
+                        : (theme.customIcon("place:" + entry.modelData.id)
+                           || (entry.modelData.path ? theme.customIcon(entry.modelData.path) : ""))
+                    label: theme.resolveRustMessage(entry.modelData.name)
+                    showLabel: rail.expanded
+                    selected: rail.activeId === entry.modelData.id
+                    dimmed: entry.isDevice ? (entry.modelData.drive.provider !== "mtp" && !entry.modelData.drive.is_mounted)
+                        : entry.modelData.missing === true || ((entry.modelData.kind === "smb" || entry.modelData.kind === "network") && entry.modelData.connected !== true)
+                    dropPath: entry.isDevice ? (entry.modelData.drive.is_mounted ? entry.modelData.path : "")
+                        : ((entry.modelData.kind === "place" || entry.modelData.kind === "bookmark" || ((entry.modelData.kind === "smb" || entry.modelData.kind === "network") && entry.modelData.connected === true)) ? entry.modelData.path : "")
+                    accessibleName: label + (entry.isDevice && entry.modelData.drive.provider !== "mtp" && !entry.modelData.drive.is_mounted ? " (" + qsTr("unmounted") + ")" : "")
+                    onActiveFocusChanged: if (activeFocus) placeList.positionViewAtIndex(entry.index, ListView.Contain)
+                    onClicked: entry.isDevice ? rail.driveClicked(entry.modelData.drive, false) : rail.placeClicked(entry.modelData, false)
+                    onMiddleClicked: entry.isDevice ? rail.driveClicked(entry.modelData.drive, true) : rail.placeClicked(entry.modelData, true)
+                    onMenuRequested: function(x, y) {
+                        if (entry.isDevice) rail.driveMenuRequested(entry.modelData.drive, x, y);
+                        else rail.placeMenuRequested(entry.modelData, x, y);
+                    }
+                    onFilesDropped: function(paths, asCopy, d) {
+                        if (dropPath.length > 0) {
+                            if (dragManager.isRmb) {
+                                var pt = mapToItem(window.contentItem, d.x, d.y);
+                                rmbDropMenu.showAt(pt.x, pt.y, paths, dropPath);
+                            } else {
+                                window.handleDrop(paths, dropPath, asCopy);
+                            }
+                        }
+                    }
+                }
             }
 
             // Drop a folder on the empty part of the rail to bookmark it.
@@ -331,17 +472,25 @@ Rectangle {
                 selected: rail.activeId === "trash"
                 accessibleName: qsTr("Trash")
                 acceptsTrashDrop: true
+                emptyTrashAction: true
                 onClicked: rail.placeClicked(rail.trashPlace, false)
                 onMiddleClicked: rail.placeClicked(rail.trashPlace, true)
+                onEmptyTrashRequested: window.confirmEmptyTrash()
                 onMenuRequested: function(x, y) { rail.placeMenuRequested(rail.trashPlace, x, y); }
-                onFilesDropped: function(paths, asCopy) {
-                    core.trash_items(JSON.stringify(paths));
+                onFilesDropped: function(paths, asCopy, d) {
+                    if (dragManager.isRmb) {
+                        var pt = mapToItem(window.contentItem, d.x, d.y);
+                        rmbDropMenu.showAt(pt.x, pt.y, paths, "trash");
+                    } else {
+                        core.trash_items(JSON.stringify(paths));
+                    }
                 }
             }
         }
 
         RailButton {
             id: settingsBtn
+            visible: !rail.pickerMode
             Layout.fillWidth: true
             iconName: "gear"
             systemIcon: "preferences-system-symbolic"
@@ -358,6 +507,7 @@ Rectangle {
         id: btn
         property string iconName: "folder"
         property string systemIcon: ""
+        // A user-picked icon (Theme.customIcons) replaces both of the above.
         property string customSpec: ""
         property string label: ""
         property bool showLabel: false
@@ -365,17 +515,37 @@ Rectangle {
         property bool dimmed: false
         property string dropPath: ""
         property bool acceptsTrashDrop: false
+        // Trash tab only: while the pointer is over the row, the icon turns
+        // into a broom button that empties the trash instead of opening it.
+        property bool emptyTrashAction: false
         property string accessibleName: label
+        property var entryData: null
+        readonly property bool containsMouse: mouse.containsMouse
+        readonly property bool showBroom: btn.emptyTrashAction && mouse.containsMouse
+            && typeof core !== "undefined" && core && !core.trash_empty
+        readonly property bool overBroom: mouse.mouseX >= iconBox.x && mouse.mouseX <= iconBox.x + iconBox.width
 
         signal clicked()
         signal middleClicked()
         signal menuRequested(real x, real y)
-        signal filesDropped(var paths, bool asCopy)
+        signal filesDropped(var paths, bool asCopy, var dropEvent)
+        // Raised when the broom button is clicked while hovering the trash tab.
+        signal emptyTrashRequested()
 
         implicitHeight: 44
         height: 44
         scale: mouse.pressed ? 0.95 : (mouse.containsMouse ? 1.02 : 1.0)
         Behavior on scale { enabled: theme.animate; SpringAnimation { spring: 4.0; damping: 0.3 } }
+        activeFocusOnTab: true
+        onActiveFocusChanged: {
+            if (activeFocus)
+                rail.focusedButton = btn;
+            else if (rail.focusedButton === btn)
+                rail.focusedButton = null;
+        }
+        Keys.onReturnPressed: btn.clicked()
+        Keys.onEnterPressed: btn.clicked()
+        Keys.onSpacePressed: btn.clicked()
         Accessible.role: Accessible.Button
         Accessible.name: accessibleName
         Accessible.onPressAction: btn.clicked()
@@ -389,7 +559,7 @@ Rectangle {
             radius: 22
             color: btn.dropHover ? theme.primaryContainer
                 : (mouse.containsMouse && !btn.selected ? theme.hoverOverlay : "transparent")
-            border.width: btn.dropHover ? 2 : 0
+            border.width: btn.dropHover || btn.activeFocus ? 2 : 0
             border.color: theme.primary
             Behavior on color { enabled: theme.animate; ColorAnimation { duration: theme.durationFast } }
             Behavior on width { enabled: theme.animate; SpringAnimation { spring: 3.5; damping: 0.35 } }
@@ -404,22 +574,48 @@ Rectangle {
             scale: mouse.pressed ? 0.88 : (mouse.containsMouse ? 1.10 : 1.0)
             Behavior on scale { enabled: theme.animate; SpringAnimation { spring: 4.5; damping: 0.3 } }
 
+            // Trash empty-on-hover: the row's own icon becomes a button on
+            // hover, wrapped in a rotating M3 cookie shape. Only the icon
+            // empties the trash, the rest of the row keeps opening it.
+            LoafShape {
+                anchors.centerIn: parent
+                width: 38
+                height: 38
+                shape: "cookie6"
+                visible: btn.showBroom
+                opacity: btn.showBroom ? 1.0 : 0.0
+                rotation: btn.showBroom ? 135 : 0
+                color: theme.backdropSurface(theme.surfaceContainer)
+                Behavior on rotation { enabled: theme.animate; SpringAnimation { spring: 3.2; damping: 0.32 } }
+                Behavior on opacity { enabled: theme.animate; NumberAnimation { duration: 140; easing.type: Easing.OutCubic } }
+            }
+
             CustomIcon {
-                visible: btn.customSpec.length > 0
+                visible: btn.customSpec.length > 0 && !btn.showBroom
                 anchors.centerIn: parent
                 spec: btn.customSpec
                 size: 20
                 color: btn.selected ? theme.primaryContainerFg : (mouse.containsMouse ? theme.textMain : theme.textMuted)
             }
+
             LoafIcon {
-                visible: btn.customSpec.length === 0 && (theme.iconSource === "phosphor" || btn.systemIcon.length === 0)
+                visible: btn.customSpec.length === 0 && (theme.iconSource === "phosphor" || btn.systemIcon.length === 0) && !btn.showBroom
                 anchors.centerIn: parent
                 name: btn.iconName
                 size: 20
                 color: btn.selected ? theme.primaryContainerFg : (mouse.containsMouse ? theme.textMain : theme.textMuted)
             }
+
+            LoafIcon {
+                visible: btn.showBroom
+                anchors.centerIn: parent
+                name: "broom"
+                size: 18
+                color: btn.overBroom ? theme.danger : theme.textMuted
+                Behavior on color { enabled: theme.animate; ColorAnimation { duration: theme.durationFast } }
+            }
             Image {
-                visible: btn.customSpec.length === 0 && theme.iconSource !== "phosphor" && btn.systemIcon.length > 0
+                visible: btn.customSpec.length === 0 && theme.iconSource !== "phosphor" && btn.systemIcon.length > 0 && !btn.showBroom
                 anchors.centerIn: parent
                 source: visible ? window.systemIcon(btn.systemIcon) : ""
                 width: 20
@@ -434,7 +630,7 @@ Rectangle {
             anchors.left: iconBox.right
             anchors.leftMargin: 6
             anchors.right: parent.right
-            anchors.rightMargin: 16
+            anchors.rightMargin: btn.showLabel ? 52 : 16
             anchors.verticalCenter: parent.verticalCenter
             visible: opacity > 0.01
             opacity: btn.showLabel ? (btn.dimmed ? 0.5 : 1.0) : 0.0
@@ -450,12 +646,10 @@ Rectangle {
             color: btn.selected ? theme.primaryContainerFg : (mouse.containsMouse ? theme.textMain : theme.textMuted)
             font.pixelSize: theme.fs(13)
             font.bold: btn.selected
+            font.weight: theme.fw(btn.selected)
+            font.family: theme.fontFamily
             elide: Text.ElideRight
         }
-
-        ToolTip.visible: !btn.showLabel && mouse.containsMouse && btn.label.length > 0
-        ToolTip.text: btn.label
-        ToolTip.delay: 500
 
         DropArea {
             id: drop
@@ -468,7 +662,7 @@ Rectangle {
                     return;
                 var asCopy = (d.source === dragProxy) ? dragManager.asCopy : (d.proposedAction === Qt.CopyAction);
                 d.accept(asCopy ? Qt.CopyAction : Qt.MoveAction);
-                btn.filesDropped(paths, asCopy);
+                btn.filesDropped(paths, asCopy, d);
             }
         }
 
@@ -478,12 +672,29 @@ Rectangle {
             hoverEnabled: true
             cursorShape: Qt.PointingHandCursor
             acceptedButtons: Qt.LeftButton | Qt.MiddleButton | Qt.RightButton
+            onEntered: {
+                if (btn.showLabel)
+                    return;
+                var label = (btn.showBroom && btn.overBroom) ? qsTr("Empty Trash") : btn.label;
+                if (label.length > 0)
+                    tooltip.show(btn, label);
+            }
+            onExited: tooltip.hide(btn)
+            onPositionChanged: {
+                if (!btn.showBroom)
+                    return;
+                var label = btn.overBroom ? qsTr("Empty Trash") : btn.label;
+                if (tooltip.target === btn && tooltip.tipText !== label)
+                    tooltip.show(btn, label);
+            }
             onClicked: function(m) {
                 if (m.button === Qt.RightButton) {
                     var p = mapToItem(window.contentItem, m.x, m.y);
                     btn.menuRequested(p.x, p.y);
                 } else if (m.button === Qt.MiddleButton) {
                     btn.middleClicked();
+                } else if (btn.showBroom && m.x >= iconBox.x && m.x <= iconBox.x + iconBox.width) {
+                    btn.emptyTrashRequested();
                 } else {
                     btn.clicked();
                 }

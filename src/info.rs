@@ -1,5 +1,6 @@
 //! Quick Look previews and the Properties dialog data.
 
+use crate::message::{Message, MessageKey};
 use crate::{archive, listing, native, util};
 use serde::Serialize;
 use std::fs;
@@ -23,7 +24,7 @@ pub struct QuickLook {
     /// For "thumbnail" kind: id for image://thumb/ (video, pdf, font...).
     pub thumb_id: String,
     pub size_str: String,
-    pub modified_str: String,
+    pub modified: i64,
     pub mime: String,
     pub note: String,
 }
@@ -46,14 +47,17 @@ pub fn preview_language(ext: &str) -> &'static str {
         "css" | "scss" | "sass" | "less" => "css",
         "json" | "json5" | "jsonc" => "json",
         "yaml" | "yml" | "toml" | "ini" | "conf" | "cfg" | "properties" => "yaml",
-        "rb" | "php" | "swift" | "hs" | "ml" | "ex" | "exs" | "erl" | "clj" | "zig" | "dart" | "r" | "jl" => "c_like",
+        "rb" | "php" | "swift" | "hs" | "ml" | "ex" | "exs" | "erl" | "clj" | "zig" | "dart"
+        | "r" | "jl" => "c_like",
         _ => "text",
     }
 }
 
 /// Reads the head of a file; (text, truncated, looks_binary).
 pub fn read_head(path: &Path) -> (String, bool, bool) {
-    let Ok(f) = fs::File::open(path) else { return (String::new(), false, false) };
+    let Ok(f) = fs::File::open(path) else {
+        return (String::new(), false, false);
+    };
     let len = f.metadata().map(|m| m.len()).unwrap_or(0);
     let mut buf = Vec::with_capacity(PREVIEW_BYTES.min(len) as usize);
     if f.take(PREVIEW_BYTES).read_to_end(&mut buf).is_err() {
@@ -70,28 +74,37 @@ pub fn read_head(path: &Path) -> (String, bool, bool) {
             end = e.valid_up_to(); // only an incomplete character at the end
         }
     }
-    (String::from_utf8_lossy(&buf[..end]).to_string(), len > PREVIEW_BYTES, false)
+    (
+        String::from_utf8_lossy(&buf[..end]).to_string(),
+        len > PREVIEW_BYTES,
+        false,
+    )
 }
 
 pub fn quick_look(path: &Path) -> QuickLook {
-    let name = path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+    let name = path
+        .file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .unwrap_or_default();
     let meta = fs::metadata(path).ok();
     let mut q = QuickLook {
         name: name.clone(),
         path: path.to_string_lossy().to_string(),
         kind: "none".into(),
-        note: "No preview available".into(),
+        note: Message::key(MessageKey::InfoNoPreview).to_string(),
         ..Default::default()
     };
     let Some(meta) = meta else {
-        q.note = "This item no longer exists".into();
+        q.note = Message::key(MessageKey::InfoMissing).to_string();
         return q;
     };
-    q.modified_str = crate::pane::relative_time(meta.mtime());
+    q.modified = meta.mtime();
     if meta.is_dir() {
         let n = fs::read_dir(path).map(|r| r.count()).unwrap_or(0);
         q.kind = "folder".into();
-        q.note = format!("Folder · {} item{}", n, if n == 1 { "" } else { "s" });
+        q.note = Message::key(MessageKey::InfoFolderItems)
+            .count(n)
+            .to_string();
         return q;
     }
     q.size_str = util::format_size(meta.len());
@@ -113,14 +126,24 @@ pub fn quick_look(path: &Path) -> QuickLook {
                 let mut lines: Vec<String> = entries
                     .iter()
                     .take(400)
-                    .map(|e| if e.is_dir { format!("{}/", e.path) } else { format!("{}  ({})", e.path, util::format_size(e.size)) })
+                    .map(|e| {
+                        if e.is_dir {
+                            format!("{}/", e.path)
+                        } else {
+                            format!("{}  ({})", e.path, util::format_size(e.size))
+                        }
+                    })
                     .collect();
                 lines.sort();
                 q.text = lines.join("\n");
                 q.truncated = entries.len() > 400;
-                q.note = format!("Archive · {} files", total);
+                q.note = Message::key(MessageKey::InfoArchiveFiles)
+                    .count(total)
+                    .to_string();
             }
-            Err(archive::ArchiveError::NeedPassword) => q.note = "Encrypted archive".into(),
+            Err(archive::ArchiveError::NeedPassword) => {
+                q.note = Message::key(MessageKey::InfoEncryptedArchive).to_string()
+            }
             Err(e) => q.note = e.to_string(),
         }
         return q;
@@ -129,12 +152,12 @@ pub fn quick_look(path: &Path) -> QuickLook {
     if listing::is_video_ext(&ext) || listing::is_audio_ext(&ext) || thumbable {
         q.kind = if thumbable { "thumbnail" } else { "media" }.into();
         q.thumb_id = format!("{}-{}", crate::pane::hex_path(&q.path), meta.mtime());
-        q.note = "Press Enter to open it".into();
+        q.note = Message::key(MessageKey::InfoPressEnter).to_string();
         return q;
     }
     let (text, truncated, binary) = read_head(path);
     if binary {
-        q.note = "Binary file · no text preview".into();
+        q.note = Message::key(MessageKey::InfoBinaryFile).to_string();
         return q;
     }
     q.kind = "text".into();
@@ -151,7 +174,9 @@ fn user_name(uid: u32) -> String {
     let mut out: *mut libc::passwd = std::ptr::null_mut();
     let rc = unsafe { libc::getpwuid_r(uid, &mut pw, buf.as_mut_ptr(), buf.len(), &mut out) };
     if rc == 0 && !out.is_null() {
-        return unsafe { std::ffi::CStr::from_ptr(pw.pw_name) }.to_string_lossy().to_string();
+        return unsafe { std::ffi::CStr::from_ptr(pw.pw_name) }
+            .to_string_lossy()
+            .to_string();
     }
     uid.to_string()
 }
@@ -162,14 +187,22 @@ fn group_name(gid: u32) -> String {
     let mut out: *mut libc::group = std::ptr::null_mut();
     let rc = unsafe { libc::getgrgid_r(gid, &mut gr, buf.as_mut_ptr(), buf.len(), &mut out) };
     if rc == 0 && !out.is_null() {
-        return unsafe { std::ffi::CStr::from_ptr(gr.gr_name) }.to_string_lossy().to_string();
+        return unsafe { std::ffi::CStr::from_ptr(gr.gr_name) }
+            .to_string_lossy()
+            .to_string();
     }
     gid.to_string()
 }
 
 pub fn mode_string(mode: u32, is_dir: bool, is_link: bool) -> String {
     let mut s = String::with_capacity(10);
-    s.push(if is_link { 'l' } else if is_dir { 'd' } else { '-' });
+    s.push(if is_link {
+        'l'
+    } else if is_dir {
+        'd'
+    } else {
+        '-'
+    });
     for shift in [6, 3, 0] {
         let bits = (mode >> shift) & 7;
         s.push(if bits & 4 != 0 { 'r' } else { '-' });
@@ -185,28 +218,18 @@ pub fn item_info(path: &Path) -> serde_json::Value {
         return serde_json::json!({ "name": path.file_name().map(|n| n.to_string_lossy().to_string()), "path": path, "exists": false });
     };
     let is_link = lmeta.file_type().is_symlink();
-    let meta = if is_link { fs::metadata(path).unwrap_or(lmeta.clone()) } else { lmeta.clone() };
-    let is_dir = meta.is_dir();
-    let mime = if is_dir { "inode/directory".to_string() } else { native::mime_type(path, true) };
-    let created = meta
-        .created()
-        .ok()
-        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-        .map(|d| crate::pane::format_date(d.as_secs() as i64))
-        .unwrap_or_else(|| "-".into());
-    let fmt_full = |ts: i64| {
-        let t = ts as libc::time_t;
-        let mut tm: libc::tm = unsafe { std::mem::zeroed() };
-        unsafe {
-            libc::localtime_r(&t, &mut tm);
-        }
-        format!(
-            "{} {:02}:{:02}",
-            crate::pane::format_date(ts),
-            tm.tm_hour,
-            tm.tm_min
-        )
+    let meta = if is_link {
+        fs::metadata(path).unwrap_or(lmeta.clone())
+    } else {
+        lmeta.clone()
     };
+    let is_dir = meta.is_dir();
+    let mime = if is_dir {
+        "inode/directory".to_string()
+    } else {
+        native::mime_type(path, true)
+    };
+    let created = "-".to_string();
     let free = path
         .parent()
         .and_then(|p| crate::drives::statvfs(&p.to_string_lossy()))
@@ -224,10 +247,13 @@ pub fn item_info(path: &Path) -> serde_json::Value {
         "size": if is_dir { 0 } else { meta.len() },
         "size_str": if is_dir { "-".to_string() } else { format!("{} ({} bytes)", util::format_size(meta.len()), meta.len()) },
         "items": if is_dir { fs::read_dir(path).map(|r| r.count()).unwrap_or(0) } else { 0 },
+        "modified_ts": meta.mtime(),
+        "accessed_ts": meta.atime(),
+        "created_ts": meta.created().ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map(|d| d.as_secs() as i64).unwrap_or(0),
         "mime": mime,
         "type": if is_dir { "Folder".to_string() } else { native::mime_comment(&mime) },
-        "modified": fmt_full(meta.mtime()),
-        "accessed": fmt_full(meta.atime()),
+        "modified": String::new(),
+        "accessed": String::new(),
         "created": created,
         "mode": format!("{:o}", mode),
         "mode_bits": mode,

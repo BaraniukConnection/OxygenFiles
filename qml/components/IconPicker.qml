@@ -39,8 +39,10 @@ LoafDialog {
     function load() {
         if (picker.source === "system" && picker.systemNames === null)
             picker.systemNames = JSON.parse(core.icon_set_json("system"));
-        else if (picker.source === "material" && picker.materialNames === null)
+        else if (picker.source === "material" && picker.materialNames === null) {
+            theme.materialRequested = true;
             picker.materialNames = JSON.parse(core.icon_set_json("material"));
+        }
         else if (picker.source === "emoji" && picker.emojiRows === null)
             picker.emojiRows = JSON.parse(core.icon_set_json("emoji"));
         else if (picker.source === "user" && picker.userThemes === null)

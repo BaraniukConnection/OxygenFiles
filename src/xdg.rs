@@ -2,14 +2,10 @@
 //! XDG user folders (localized names), GTK bookmarks, recently used files,
 //! templates, Nautilus scripts, and Loaf's own starred list.
 
+use crate::message::{Message, MessageKey};
 use crate::util;
 use std::fs;
 use std::path::{Path, PathBuf};
-
-// ------------------------------------------------------------------
-// XDG user directories (~/.config/user-dirs.dirs)
-// ------------------------------------------------------------------
-
 /// Parses `user-dirs.dirs` content into (KEY, absolute path) pairs, e.g.
 /// ("PICTURES", "/home/u/Bilder").
 pub fn parse_user_dirs(content: &str, home: &Path) -> Vec<(String, PathBuf)> {
@@ -19,8 +15,16 @@ pub fn parse_user_dirs(content: &str, home: &Path) -> Vec<(String, PathBuf)> {
         if line.starts_with('#') {
             continue;
         }
-        let Some((k, v)) = line.split_once('=') else { continue };
-        let Some(key) = k.trim().strip_prefix("XDG_").and_then(|k| k.strip_suffix("_DIR")) else { continue };
+        let Some((k, v)) = line.split_once('=') else {
+            continue;
+        };
+        let Some(key) = k
+            .trim()
+            .strip_prefix("XDG_")
+            .and_then(|k| k.strip_suffix("_DIR"))
+        else {
+            continue;
+        };
         let v = v.trim().trim_matches('"');
         let path = if let Some(rest) = v.strip_prefix("$HOME") {
             home.join(rest.trim_start_matches('/'))
@@ -42,7 +46,8 @@ pub fn parse_user_dirs(content: &str, home: &Path) -> Vec<(String, PathBuf)> {
 /// TEMPLATES, PUBLICSHARE, DOCUMENTS, MUSIC, PICTURES, VIDEOS).
 pub fn user_dirs() -> Vec<(String, PathBuf)> {
     let home = util::home();
-    let content = fs::read_to_string(util::config_home().join("user-dirs.dirs")).unwrap_or_default();
+    let content =
+        fs::read_to_string(util::config_home().join("user-dirs.dirs")).unwrap_or_default();
     let mut dirs = parse_user_dirs(&content, &home);
     // Fall back to the English defaults for keys the file doesn't define.
     for (key, name) in [
@@ -63,7 +68,10 @@ pub fn user_dirs() -> Vec<(String, PathBuf)> {
 }
 
 pub fn user_dir(key: &str) -> Option<PathBuf> {
-    user_dirs().into_iter().find(|(k, _)| k == key).map(|(_, p)| p)
+    user_dirs()
+        .into_iter()
+        .find(|(k, _)| k == key)
+        .map(|(_, p)| p)
 }
 
 #[derive(Clone, Debug, serde::Serialize, PartialEq)]
@@ -85,7 +93,7 @@ pub fn default_places() -> Vec<Place> {
     let home = util::home();
     let mut v = vec![Place {
         id: "home".into(),
-        name: "Home".into(),
+        name: Message::key(MessageKey::PlaceHome).to_string(),
         path: home.to_string_lossy().to_string(),
         icon: "house".into(),
         system_icon: "user-home".into(),
@@ -100,13 +108,20 @@ pub fn default_places() -> Vec<Place> {
         ("MUSIC", "music", "folder-music"),
         ("VIDEOS", "video", "folder-videos"),
     ] {
-        let Some((_, p)) = dirs.iter().find(|(k, _)| k == key) else { continue };
+        let Some((_, p)) = dirs.iter().find(|(k, _)| k == key) else {
+            continue;
+        };
         if !p.is_dir() {
             continue;
         }
         v.push(Place {
             id: key.into(),
-            name: p.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_else(|| key.into()),
+            name: Message::raw(
+                p.file_name()
+                    .map(|n| n.to_string_lossy().to_string())
+                    .unwrap_or_else(|| key.into()),
+            )
+            .to_string(),
             path: p.to_string_lossy().to_string(),
             icon: icon.into(),
             system_icon: sys.into(),
@@ -116,14 +131,29 @@ pub fn default_places() -> Vec<Place> {
 
     // Common non-standard places: Projects and Games (with localized folder names).
     let project_names = [
-        "Projects", "Projekte", "Projets", "Proyectos", "Projetos", "Проекты", "Progetti", "Projeler", "Development", "Dev", "Code",
+        "Projects",
+        "Projekte",
+        "Projets",
+        "Proyectos",
+        "Projetos",
+        "Проекты",
+        "Progetti",
+        "Projeler",
+        "Development",
+        "Dev",
+        "Code",
     ];
     for name in project_names {
         let p = home.join(name);
         if p.is_dir() {
             v.push(Place {
                 id: "PROJECTS".into(),
-                name: p.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_else(|| "Projects".into()),
+                name: Message::raw(
+                    p.file_name()
+                        .map(|n| n.to_string_lossy().to_string())
+                        .unwrap_or_else(|| "Projects".into()),
+                )
+                .to_string(),
                 path: p.to_string_lossy().to_string(),
                 icon: "code".into(),
                 system_icon: "folder-development".into(),
@@ -141,7 +171,12 @@ pub fn default_places() -> Vec<Place> {
         if p.is_dir() {
             v.push(Place {
                 id: "GAMES".into(),
-                name: p.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_else(|| "Games".into()),
+                name: Message::raw(
+                    p.file_name()
+                        .map(|n| n.to_string_lossy().to_string())
+                        .unwrap_or_else(|| "Games".into()),
+                )
+                .to_string(),
                 path: p.to_string_lossy().to_string(),
                 icon: "game-controller".into(),
                 system_icon: "applications-games".into(),
@@ -153,11 +188,6 @@ pub fn default_places() -> Vec<Place> {
 
     v
 }
-
-// ------------------------------------------------------------------
-// GTK bookmarks (~/.config/gtk-3.0/bookmarks)
-// ------------------------------------------------------------------
-
 pub fn bookmarks_file() -> PathBuf {
     util::config_home().join("gtk-3.0/bookmarks")
 }
@@ -172,7 +202,9 @@ pub struct Bookmark {
 
 impl Bookmark {
     pub fn path(&self) -> Option<PathBuf> {
-        self.uri.strip_prefix("file://").map(crate::trash::decode_path)
+        self.uri
+            .strip_prefix("file://")
+            .map(crate::trash::decode_path)
     }
     pub fn display_name(&self) -> String {
         if !self.label.is_empty() {
@@ -190,8 +222,14 @@ pub fn parse_bookmarks(content: &str) -> Vec<Bookmark> {
         .map(str::trim)
         .filter(|l| !l.is_empty())
         .map(|l| match l.split_once(' ') {
-            Some((u, label)) => Bookmark { uri: u.to_string(), label: label.trim().to_string() },
-            None => Bookmark { uri: l.to_string(), label: String::new() },
+            Some((u, label)) => Bookmark {
+                uri: u.to_string(),
+                label: label.trim().to_string(),
+            },
+            None => Bookmark {
+                uri: l.to_string(),
+                label: String::new(),
+            },
         })
         .collect()
 }
@@ -225,7 +263,10 @@ pub fn add_bookmark(path: &Path) -> std::io::Result<()> {
     let mut list = bookmarks();
     let uri = uri_for(path);
     if !list.iter().any(|b| b.uri == uri) {
-        list.push(Bookmark { uri, label: String::new() });
+        list.push(Bookmark {
+            uri,
+            label: String::new(),
+        });
         save_bookmarks(&list)?;
     }
     Ok(())
@@ -255,16 +296,13 @@ pub fn rename_bookmark(path: &Path, label: &str) -> std::io::Result<()> {
 /// Moves the bookmark for `path` to position `to` among all bookmarks.
 pub fn move_bookmark(path: &Path, to: usize) -> std::io::Result<()> {
     let mut list = bookmarks();
-    let Some(from) = list.iter().position(|b| b.path().as_deref() == Some(path)) else { return Ok(()) };
+    let Some(from) = list.iter().position(|b| b.path().as_deref() == Some(path)) else {
+        return Ok(());
+    };
     let b = list.remove(from);
     list.insert(to.min(list.len()), b);
     save_bookmarks(&list)
 }
-
-// ------------------------------------------------------------------
-// Recently used files (~/.local/share/recently-used.xbel)
-// ------------------------------------------------------------------
-
 pub fn recent_file() -> PathBuf {
     util::data_home().join("recently-used.xbel")
 }
@@ -277,11 +315,18 @@ fn attr<'a>(tag: &'a str, name: &str) -> Option<&'a str> {
 }
 
 fn xml_unescape(s: &str) -> String {
-    s.replace("&lt;", "<").replace("&gt;", ">").replace("&quot;", "\"").replace("&apos;", "'").replace("&amp;", "&")
+    s.replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .replace("&quot;", "\"")
+        .replace("&apos;", "'")
+        .replace("&amp;", "&")
 }
 
 fn xml_escape(s: &str) -> String {
-    s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;").replace('"', "&quot;")
+    s.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
 }
 
 /// (path, modified ISO timestamp) of every local file entry, newest first.
@@ -295,8 +340,13 @@ pub fn parse_recent(content: &str) -> Vec<(PathBuf, String)> {
         if let Some(href) = attr(tag, "href") {
             let href = xml_unescape(href);
             if let Some(p) = href.strip_prefix("file://") {
-                let stamp = attr(tag, "modified").or_else(|| attr(tag, "visited")).or_else(|| attr(tag, "added"));
-                out.push((crate::trash::decode_path(p), stamp.unwrap_or("").to_string()));
+                let stamp = attr(tag, "modified")
+                    .or_else(|| attr(tag, "visited"))
+                    .or_else(|| attr(tag, "added"));
+                out.push((
+                    crate::trash::decode_path(p),
+                    stamp.unwrap_or("").to_string(),
+                ));
             }
         }
         rest = &tail[end.min(tail.len())..];
@@ -341,7 +391,10 @@ pub fn add_recent_in(content: &str, path: &Path, mime: &str, now: &str) -> Strin
     if let Some(pos) = content.find(&needle) {
         // Update the existing entry's timestamps.
         let tag_start = content[..pos].rfind("<bookmark").unwrap_or(pos);
-        let tag_end = content[pos..].find('>').map(|e| pos + e).unwrap_or(content.len());
+        let tag_end = content[pos..]
+            .find('>')
+            .map(|e| pos + e)
+            .unwrap_or(content.len());
         let mut tag = content[tag_start..tag_end].to_string();
         for key in ["modified", "visited"] {
             let k = format!(" {}=\"", key);
@@ -384,11 +437,6 @@ pub fn add_recent(path: &Path, mime: &str) {
     let updated = add_recent_in(&content, path, mime, &iso_utc_now());
     let _ = util::write_atomic(&file, updated.as_bytes());
 }
-
-// ------------------------------------------------------------------
-// Templates (~/Templates) and Nautilus scripts
-// ------------------------------------------------------------------
-
 #[derive(Clone, Debug, serde::Serialize)]
 pub struct MenuFile {
     pub name: String,
@@ -399,7 +447,9 @@ pub struct MenuFile {
 
 fn menu_tree(dir: &Path, want: &dyn Fn(&Path) -> bool, depth: usize) -> Vec<MenuFile> {
     let mut out = Vec::new();
-    let Ok(rd) = fs::read_dir(dir) else { return out };
+    let Ok(rd) = fs::read_dir(dir) else {
+        return out;
+    };
     for e in rd.flatten() {
         let name = e.file_name().to_string_lossy().to_string();
         if name.starts_with('.') {
@@ -410,11 +460,19 @@ fn menu_tree(dir: &Path, want: &dyn Fn(&Path) -> bool, depth: usize) -> Vec<Menu
             if depth < 3 {
                 let children = menu_tree(&p, want, depth + 1);
                 if !children.is_empty() {
-                    out.push(MenuFile { name, path: p.to_string_lossy().to_string(), children });
+                    out.push(MenuFile {
+                        name,
+                        path: p.to_string_lossy().to_string(),
+                        children,
+                    });
                 }
             }
         } else if want(&p) {
-            out.push(MenuFile { name, path: p.to_string_lossy().to_string(), children: vec![] });
+            out.push(MenuFile {
+                name,
+                path: p.to_string_lossy().to_string(),
+                children: vec![],
+            });
         }
     }
     out.sort_by_key(|m| m.name.to_lowercase());
@@ -430,13 +488,18 @@ pub fn templates() -> Vec<MenuFile> {
 
 /// Folders Nautilus-style scripts are read from.
 pub fn script_dirs() -> Vec<PathBuf> {
-    vec![util::data_home().join("nautilus/scripts"), util::data_home().join("loaf/scripts")]
+    vec![
+        util::data_home().join("nautilus/scripts"),
+        util::data_home().join("loaf/scripts"),
+    ]
 }
 
 pub fn scripts() -> Vec<MenuFile> {
     let is_exec = |p: &Path| {
         use std::os::unix::fs::PermissionsExt;
-        fs::metadata(p).map(|m| m.is_file() && m.permissions().mode() & 0o111 != 0).unwrap_or(false)
+        fs::metadata(p)
+            .map(|m| m.is_file() && m.permissions().mode() & 0o111 != 0)
+            .unwrap_or(false)
     };
     let mut out = Vec::new();
     for d in script_dirs() {
@@ -447,21 +510,26 @@ pub fn scripts() -> Vec<MenuFile> {
 
 /// Runs a Nautilus script with the environment Nautilus provides.
 pub fn run_script(script: &Path, current_dir: &Path, selected: &[PathBuf]) -> std::io::Result<()> {
-    let paths: String = selected.iter().map(|p| format!("{}\n", p.to_string_lossy())).collect();
-    let uris: String = selected.iter().map(|p| format!("{}\n", uri_for(p))).collect();
+    let paths: String = selected
+        .iter()
+        .map(|p| format!("{}\n", p.to_string_lossy()))
+        .collect();
+    let uris: String = selected
+        .iter()
+        .map(|p| format!("{}\n", uri_for(p)))
+        .collect();
     let mut cmd = std::process::Command::new(script);
     cmd.current_dir(current_dir)
-        .args(selected.iter().map(|p| p.file_name().map(|n| n.to_os_string()).unwrap_or_default()))
+        .args(
+            selected
+                .iter()
+                .map(|p| p.file_name().map(|n| n.to_os_string()).unwrap_or_default()),
+        )
         .env("NAUTILUS_SCRIPT_SELECTED_FILE_PATHS", paths)
         .env("NAUTILUS_SCRIPT_SELECTED_URIS", uris)
         .env("NAUTILUS_SCRIPT_CURRENT_URI", uri_for(current_dir));
     util::spawn_detached(cmd)
 }
-
-// ------------------------------------------------------------------
-// Starred files (Loaf's own list, ~/.config/loaf/starred.json)
-// ------------------------------------------------------------------
-
 fn starred_file() -> PathBuf {
     util::config_home().join("loaf/starred.json")
 }
@@ -482,8 +550,16 @@ pub fn set_starred(path: &Path, on: bool) -> std::io::Result<()> {
     if on {
         list.push(path.to_path_buf());
     }
-    let json: Vec<String> = list.iter().map(|p| p.to_string_lossy().to_string()).collect();
-    util::write_atomic(&starred_file(), serde_json::to_string_pretty(&json).unwrap_or_default().as_bytes())
+    let json: Vec<String> = list
+        .iter()
+        .map(|p| p.to_string_lossy().to_string())
+        .collect();
+    util::write_atomic(
+        &starred_file(),
+        serde_json::to_string_pretty(&json)
+            .unwrap_or_default()
+            .as_bytes(),
+    )
 }
 
 #[cfg(test)]
@@ -497,7 +573,10 @@ mod tests {
         let d = parse_user_dirs(content, home);
         assert!(d.contains(&("PICTURES".into(), PathBuf::from("/home/anna/Bilder"))));
         assert!(d.contains(&("MUSIC".into(), PathBuf::from("/data/Musik"))));
-        assert!(!d.iter().any(|(k, _)| k == "PUBLICSHARE"), "$HOME means disabled");
+        assert!(
+            !d.iter().any(|(k, _)| k == "PUBLICSHARE"),
+            "$HOME means disabled"
+        );
         assert_eq!(d.len(), 3);
     }
 
@@ -515,12 +594,33 @@ mod tests {
 
     #[test]
     fn recent_parse_and_update() {
-        let base = add_recent_in("", Path::new("/a/one.txt"), "text/plain", "2026-01-01T00:00:00Z");
-        let two = add_recent_in(&base, Path::new("/a/t&o.txt"), "text/plain", "2026-01-02T00:00:00Z");
-        let again = add_recent_in(&two, Path::new("/a/one.txt"), "text/plain", "2026-01-03T00:00:00Z");
+        let base = add_recent_in(
+            "",
+            Path::new("/a/one.txt"),
+            "text/plain",
+            "2026-01-01T00:00:00Z",
+        );
+        let two = add_recent_in(
+            &base,
+            Path::new("/a/t&o.txt"),
+            "text/plain",
+            "2026-01-02T00:00:00Z",
+        );
+        let again = add_recent_in(
+            &two,
+            Path::new("/a/one.txt"),
+            "text/plain",
+            "2026-01-03T00:00:00Z",
+        );
         let parsed = parse_recent(&again);
         assert_eq!(parsed.len(), 2, "no duplicate entry");
-        assert_eq!(parsed[0], (PathBuf::from("/a/one.txt"), "2026-01-03T00:00:00Z".to_string()));
+        assert_eq!(
+            parsed[0],
+            (
+                PathBuf::from("/a/one.txt"),
+                "2026-01-03T00:00:00Z".to_string()
+            )
+        );
         assert_eq!(parsed[1].0, PathBuf::from("/a/t&o.txt"));
         assert!(again.trim_end().ends_with("</xbel>"));
     }

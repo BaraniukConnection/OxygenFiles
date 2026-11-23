@@ -5,193 +5,412 @@ import app.loaf
 
 Item {
     id: settingsView
+
     property int activeTab: 0
     property string searchQuery: ""
     signal searchCleared()
+    signal openNetworkEditorRequested(var profile)
+    signal removeNetworkDriveRequested(string id, string label)
 
-    function matchesQuery(keywords) {
-        if (!searchQuery || searchQuery.length === 0) return true;
-        var q = searchQuery.toLowerCase().trim();
-        var parts = q.split(/\s+/);
-        var kw = keywords.toLowerCase();
-        for (var i = 0; i < parts.length; ++i) {
-            if (parts[i].length > 0 && kw.indexOf(parts[i]) === -1) {
-                return false;
+    readonly property bool isCompact: width < 660
+
+    // Main tabs displayed in the scrollable list
+    readonly property var mainTabsModel: {
+        var t = [
+            { id: "interface", index: 0, name: qsTr("Interface"), iconName: "palette", subtitle: qsTr("Theme, appearance, top bar and icon styling") },
+            { id: "behavior", index: 1, name: qsTr("Behavior"), iconName: "gear", subtitle: qsTr("Folder opening, drag behavior, and session restore") },
+            { id: "accessibility", index: 2, name: qsTr("Accessibility"), iconName: "person-arms-spread", subtitle: qsTr("Performance, motion, scaling and background effects") }
+        ];
+        if (theme.shareViaLinkEnabled) {
+            t.push({ id: "share", index: 5, name: qsTr("Share"), iconName: "share-network", subtitle: qsTr("Cloudflare tunnel file hosting and active streams") });
+        }
+        t.push({ id: "network", index: 6, name: qsTr("Network"), iconName: "network", subtitle: qsTr("Saved network drives and auto discovery") });
+        t.push({ id: "experimental", index: 3, name: qsTr("Experimental"), iconName: "sparkle", subtitle: qsTr("Preview features, advanced archives and link sharing") });
+        t.push({ id: "shortcuts", index: 7, name: qsTr("Shortcuts"), iconName: "keyboard", subtitle: qsTr("Customize keyboard shortcuts across Loaf") });
+        return t;
+    }
+
+    readonly property var allTabsModel: {
+        var all = [].concat(mainTabsModel);
+        all.push({ id: "about", index: 4, name: qsTr("About"), iconName: "info", subtitle: qsTr("Version info, credits, and links") });
+        return all;
+    }
+
+    readonly property var currentTabInfo: {
+        for (var i = 0; i < allTabsModel.length; ++i) {
+            if (allTabsModel[i].index === activeTab) return allTabsModel[i];
+        }
+        return allTabsModel[0];
+    }
+
+    readonly property int totalMatches: tabInterface.matchCount
+        + tabBehavior.matchCount
+        + tabAccessibility.matchCount
+        + tabExperimental.matchCount
+        + (theme.shareViaLinkEnabled ? tabShare.matchCount : 0)
+        + tabNetwork.matchCount
+        + tabShortcuts.matchCount
+        + tabAbout.matchCount
+
+    function getTabMatchCount(tabId) {
+        if (tabId === "interface") return tabInterface.matchCount;
+        if (tabId === "behavior") return tabBehavior.matchCount;
+        if (tabId === "accessibility") return tabAccessibility.matchCount;
+        if (tabId === "experimental") return tabExperimental.matchCount;
+        if (tabId === "share") return tabShare.matchCount;
+        if (tabId === "network") return tabNetwork.matchCount;
+        if (tabId === "shortcuts") return tabShortcuts.matchCount;
+        if (tabId === "about") return tabAbout.matchCount;
+        return 0;
+    }
+
+    function updateHighlight() {
+        if (settingsView.activeTab === 4) {
+            var ptAbout = aboutNavBtn.mapToItem(navRail, 0, 0);
+            selectionHighlight.targetY = ptAbout.y;
+            return;
+        }
+        var m = mainTabsModel || [];
+        for (var i = 0; i < m.length; ++i) {
+            if (m[i].index === settingsView.activeTab) {
+                var it = tabNavList.itemAtIndex(i);
+                if (it) {
+                    var p = it.mapToItem(navRail, 0, 0);
+                    selectionHighlight.targetY = p.y;
+                    return;
+                }
             }
         }
-        return true;
+        selectionHighlight.targetY = -100;
     }
 
-    readonly property bool card1Match: matchesQuery("theme appearance light dark auto mode color scheme")
-    readonly property bool card2Match: matchesQuery("theme palette accent colors unia emerald wallpaper catppuccin nord tokyonight gruvbox rosepine amber lavender violet ricing")
-    readonly property bool card19Match: matchesQuery("transparency opacity glass blur frosted background panels unia")
-    readonly property bool card4Match: matchesQuery("icon style vector phosphor system adwaita desktop theme")
-    readonly property bool card5Match: matchesQuery("phosphor weight variant thin light regular bold fill duotone stroke thickness")
-
-    readonly property bool card6Match: matchesQuery("left click drag action selection box pan scroll view rubberband marquee mouse")
-    readonly property bool card7Match: matchesQuery("picture thumbnails preview image photo svg gallery")
-    readonly property bool card8Match: matchesQuery("show hidden files dot dotfiles folders")
-    readonly property bool card9Match: matchesQuery("disambiguate duplicate names parent folder prefix search")
-
-    readonly property bool card10Match: matchesQuery("experimental icon styles adwaita advanced archives compress cpio tar formats")
-    readonly property bool card11Match: matchesQuery("about oxygen files loaf version musa orbitos author credits")
-    readonly property bool card12Match: matchesQuery("experimental pc customization dashboard layout sections this pc")
-    readonly property bool card13Match: matchesQuery("performance low power mode battery old slow computer animations effects gpu")
-    readonly property bool card14Match: matchesQuery("reduce motion animations accessibility")
-    readonly property bool card15Match: matchesQuery("text size font scale accessibility larger")
-    readonly property bool card16Match: matchesQuery("restore session tabs remember last folder window startup")
-    readonly property bool card17Match: matchesQuery("click rename inline single click")
-    readonly property bool card18Match: matchesQuery("search file contents text inside")
-
-    readonly property int interfaceMatches: (card1Match ? 1 : 0) + (card2Match ? 1 : 0) + (card4Match ? 1 : 0) + (card5Match ? 1 : 0)
-        + (card19Match ? 1 : 0)
-    readonly property int behaviorMatches: (card6Match ? 1 : 0) + (card7Match ? 1 : 0) + (card8Match ? 1 : 0) + (card9Match ? 1 : 0)
-        + (card16Match ? 1 : 0) + (card17Match ? 1 : 0) + (card18Match ? 1 : 0)
-    readonly property int accessibilityMatches: (card13Match ? 1 : 0) + (card14Match ? 1 : 0) + (card15Match ? 1 : 0)
-    readonly property int experimentalMatches: (card10Match ? 1 : 0) + (card12Match ? 1 : 0)
-    readonly property int aboutMatches: (card11Match ? 1 : 0)
-    readonly property int totalMatches: interfaceMatches + behaviorMatches + accessibilityMatches + experimentalMatches + aboutMatches
-
-    // Space still claimed above `panel` by panels that are painted while fading
-    // out. Overlapping the incoming tab with the outgoing one lets the switch
-    // cross-fade instead of dropping the outgoing panel in one frame.
-    function fadeOverlapAbove(panel) {
-        var panels = [tabInterface, tabBehavior, tabAccessibility, tabExperimental, tabAbout];
-        var overlap = 0;
-        for (var i = 0; i < panels.length; i++) {
-            var p = panels[i];
-            if (!p || p === panel)
-                break;
-            if (p.visible && !p.shown)
-                overlap += p.implicitHeight + contentColumn.spacing;
-        }
-        return overlap;
-    }
+    onActiveTabChanged: Qt.callLater(updateHighlight)
+    onIsCompactChanged: Qt.callLater(updateHighlight)
 
     RowLayout {
         anchors.fill: parent
-        spacing: 16
+        spacing: settingsView.isCompact ? 10 : 16
 
-        // Left Navigation Tabs
+        // Left Navigation Rail (Matches main Sidebar architecture)
         Rectangle {
+            id: navRail
             Layout.fillHeight: true
-            Layout.preferredWidth: Math.max(128, Math.min(200, parent.width * 0.40))
-            radius: theme.radiusL
-            color: theme.surfaceContainer
+            Layout.preferredWidth: settingsView.isCompact ? 68 : Math.max(160, Math.min(220, parent.width * 0.28))
+            radius: theme.radiusXl
+            color: theme.backdropSurface(theme.surfaceContainer)
+            clip: true
 
+            Behavior on Layout.preferredWidth {
+                enabled: theme.animate
+                NumberAnimation { duration: 230; easing.type: Easing.OutCubic }
+            }
             Behavior on color { enabled: theme.animate; ColorAnimation { duration: theme.durationNormal } }
+
+            // Traveling selection highlight that smoothly glides with spring animation
+            Rectangle {
+                id: selectionHighlight
+                z: 1
+                x: 12
+                width: settingsView.isCompact ? 44 : (navRail.width - 24)
+                height: 44
+                radius: 22
+                color: theme.primaryContainer
+                visible: opacity > 0.01
+                opacity: targetY >= 0 ? 1.0 : 0.0
+                property real targetY: -100
+                y: targetY
+
+                Behavior on y {
+                    enabled: theme.animate
+                    SpringAnimation { spring: 4.2; damping: 0.38 }
+                }
+                Behavior on width {
+                    enabled: theme.animate
+                    SpringAnimation { spring: 3.5; damping: 0.35 }
+                }
+                Behavior on opacity {
+                    enabled: theme.animate
+                    NumberAnimation { duration: 150; easing.type: Easing.OutCubic }
+                }
+            }
 
             ColumnLayout {
                 anchors.fill: parent
-                anchors.margins: 12
-                spacing: 6
+                anchors.topMargin: 14
+                anchors.bottomMargin: 14
+                spacing: 8
+                z: 2
 
-                // Section Label
-                Text {
-                    text: qsTr("SETTINGS")
-                    color: theme.textMuted
-                    font.pixelSize: theme.fs(10)
-                    font.bold: true
-                    font.letterSpacing: 1.2
-                    Layout.margins: 6
-                    Layout.bottomMargin: 6
+                // Header block (Icon + Settings Title)
+                Item {
+                    Layout.fillWidth: true
+                    Layout.preferredHeight: 44
+                    height: 44
+
+                    RowLayout {
+                        anchors.fill: parent
+                        anchors.leftMargin: 12
+                        anchors.rightMargin: settingsView.isCompact ? 12 : 16
+                        spacing: 8
+
+                        Item {
+                            width: 44
+                            height: 44
+
+                            LoafIcon {
+                                anchors.centerIn: parent
+                                name: "gear"
+                                size: 20
+                                color: theme.primary
+                            }
+                        }
+
+                        Text {
+                            visible: !settingsView.isCompact
+                            text: qsTr("Settings")
+                            color: theme.textMain
+                            font.pixelSize: theme.fs(14)
+                            font.bold: true
+                            elide: Text.ElideRight
+                            Layout.fillWidth: true
+                        }
+                    }
                 }
 
-                Item {
-                    id: tabNavList
-                    readonly property int rowHeight: 42
-                    readonly property int rowGap: 6
-
+                // Top Divider
+                Rectangle {
                     Layout.fillWidth: true
-                    Layout.preferredHeight: tabNavRepeater.count * rowHeight + Math.max(0, tabNavRepeater.count - 1) * rowGap
+                    Layout.preferredHeight: 1
+                    Layout.leftMargin: 12
+                    Layout.rightMargin: 12
+                    color: theme.outlineAlpha(theme.separator)
+                }
 
-                    // Selection fill travels between rows instead of popping in place.
-                    Rectangle {
-                        id: tabHighlight
+                // Scrollable Category Tabs List (matches Sidebar.qml ListView)
+                ListView {
+                    id: tabNavList
+                    Layout.fillWidth: true
+                    Layout.fillHeight: true
+                    clip: true
+                    spacing: 4
+                    boundsBehavior: Flickable.StopAtBounds
+                    model: settingsView.mainTabsModel
+                    ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded; width: 4 }
+
+                    onContentYChanged: settingsView.updateHighlight()
+                    onCountChanged: Qt.callLater(settingsView.updateHighlight)
+                    Component.onCompleted: Qt.callLater(settingsView.updateHighlight)
+
+                    delegate: Item {
+                        id: tabItem
                         width: tabNavList.width
-                        height: tabNavList.rowHeight
-                        radius: theme.radiusFull
-                        color: theme.primaryContainer
-                        y: Math.max(0, Math.min(settingsView.activeTab, tabNavRepeater.count - 1)) * (tabNavList.rowHeight + tabNavList.rowGap)
+                        height: 44
 
-                        Behavior on y { enabled: theme.animate; NumberAnimation { duration: theme.durationNormal; easing.type: Easing.OutCubic } }
-                        Behavior on color { enabled: theme.animate; ColorAnimation { duration: theme.durationFast } }
-                    }
+                        readonly property bool isCurrent: modelData.index === settingsView.activeTab
+                        readonly property bool isHovered: tabMouse.containsMouse
+                        readonly property int tabMatches: settingsView.getTabMatchCount(modelData.id)
 
-                    Repeater {
-                        id: tabNavRepeater
-                        model: [
-                            { name: "Interface", iconName: "palette" },
-                            { name: "Behavior", iconName: "gear" },
-                            { name: "Accessibility", iconName: "person-arms-spread" },
-                            { name: "Experimental", iconName: "sparkle" },
-                            { name: "About", iconName: "info" }
-                        ]
+                        scale: tabMouse.pressed ? 0.95 : (tabMouse.containsMouse ? 1.02 : 1.0)
+                        Behavior on scale { enabled: theme.animate; SpringAnimation { spring: 4.0; damping: 0.3 } }
 
-                        delegate: Item {
-                            width: tabNavList.width
-                            height: tabNavList.rowHeight
-                            y: index * (tabNavList.rowHeight + tabNavList.rowGap)
+                        Rectangle {
+                            x: 12
+                            width: settingsView.isCompact ? 44 : (tabItem.width - 24)
+                            height: 44
+                            radius: 22
+                            color: (tabItem.isHovered && !tabItem.isCurrent) ? theme.hoverOverlay : "transparent"
+                            Behavior on color { enabled: theme.animate; ColorAnimation { duration: theme.durationFast } }
+                            Behavior on width { enabled: theme.animate; SpringAnimation { spring: 3.5; damping: 0.35 } }
+                        }
 
-                            readonly property bool isCurrent: settingsView.activeTab === index
-                            readonly property bool isHovered: tabMouse.containsMouse
+                        Item {
+                            id: iconContainer
+                            x: 12
+                            width: 44
+                            height: 44
+                            scale: tabMouse.pressed ? 0.88 : (tabMouse.containsMouse ? 1.10 : 1.0)
+                            Behavior on scale { enabled: theme.animate; SpringAnimation { spring: 4.5; damping: 0.3 } }
 
-                            Rectangle {
-                                anchors.fill: parent
-                                radius: theme.radiusFull
-                                color: (isHovered && !isCurrent) ? theme.surfaceContainerHigh : "transparent"
-
+                            LoafIcon {
+                                anchors.centerIn: parent
+                                name: modelData.iconName
+                                size: 20
+                                color: tabItem.isCurrent ? theme.primaryContainerFg : (tabItem.isHovered ? theme.textMain : theme.textMuted)
                                 Behavior on color { enabled: theme.animate; ColorAnimation { duration: theme.durationFast } }
-
-                                RowLayout {
-                                    anchors.fill: parent
-                                    anchors.leftMargin: 14
-                                    anchors.rightMargin: 14
-                                    spacing: 10
-
-                                    LoafIcon {
-                                        name: modelData.iconName
-                                        size: 18
-                                        color: isCurrent ? theme.primaryContainerFg : (isHovered ? theme.textMain : theme.textMuted)
-                                        Behavior on color { enabled: theme.animate; ColorAnimation { duration: theme.durationFast } }
-                                    }
-
-                                    Text {
-                                        text: modelData.name
-                                        color: isCurrent ? theme.primaryContainerFg : (isHovered ? theme.textMain : theme.textMuted)
-                                        font.pixelSize: theme.fs(13)
-                                        font.bold: isCurrent
-                                        elide: Text.ElideRight
-                                        Layout.fillWidth: true
-                                        Behavior on color { enabled: theme.animate; ColorAnimation { duration: theme.durationFast } }
-                                    }
-                                }
                             }
 
-                            MouseArea {
-                                id: tabMouse
-                                anchors.fill: parent
-                                hoverEnabled: true
-                                cursorShape: Qt.PointingHandCursor
-                                onClicked: {
+                            // Compact search match indicator
+                            Rectangle {
+                                visible: settingsView.isCompact && settingsView.searchQuery.length > 0 && tabMatches > 0
+                                anchors.top: parent.top
+                                anchors.right: parent.right
+                                anchors.topMargin: 4
+                                anchors.rightMargin: 4
+                                width: 8
+                                height: 8
+                                radius: 4
+                                color: tabItem.isCurrent ? theme.textMain : theme.primary
+                            }
+                        }
+
+                        Text {
+                            anchors.left: iconContainer.right
+                            anchors.leftMargin: 8
+                            anchors.right: badgeContainer.visible ? badgeContainer.left : parent.right
+                            anchors.rightMargin: 12
+                            anchors.verticalCenter: parent.verticalCenter
+                            visible: !settingsView.isCompact
+                            text: modelData.name
+                            color: tabItem.isCurrent ? theme.primaryContainerFg : (tabItem.isHovered ? theme.textMain : theme.textMuted)
+                            font.pixelSize: theme.fs(13)
+                            font.bold: tabItem.isCurrent
+                            font.family: theme.fontFamily
+                            elide: Text.ElideRight
+                            Behavior on color { enabled: theme.animate; ColorAnimation { duration: theme.durationFast } }
+                        }
+
+                        Rectangle {
+                            id: badgeContainer
+                            visible: !settingsView.isCompact && settingsView.searchQuery.length > 0 && tabMatches > 0
+                            anchors.right: parent.right
+                            anchors.rightMargin: 16
+                            anchors.verticalCenter: parent.verticalCenter
+                            radius: theme.radiusFull
+                            color: isCurrent ? theme.surfaceContainerHighest : theme.primaryContainer
+                            implicitHeight: 20
+                            implicitWidth: badgeTxt.implicitWidth + 10
+
+                            Text {
+                                id: badgeTxt
+                                anchors.centerIn: parent
+                                text: tabMatches.toString()
+                                color: isCurrent ? theme.textMain : theme.primaryContainerFg
+                                font.pixelSize: theme.fs(10)
+                                font.bold: true
+                            }
+                        }
+
+                        MouseArea {
+                            id: tabMouse
+                            anchors.fill: parent
+                            hoverEnabled: true
+                            cursorShape: Qt.PointingHandCursor
+                            onEntered: if (settingsView.isCompact) tooltip.show(tabMouse, modelData.name)
+                            onExited: tooltip.hide(tabMouse)
+                            onClicked: {
+                                if (settingsView.searchQuery.length > 0) {
                                     settingsView.searchCleared();
-                                    settingsView.activeTab = index;
+                                    settingsView.searchQuery = "";
                                 }
+                                settingsView.activeTab = modelData.index;
                             }
                         }
                     }
                 }
 
-                Item { Layout.fillHeight: true }
+                // Bottom Divider
+                Rectangle {
+                    Layout.fillWidth: true
+                    Layout.preferredHeight: 1
+                    Layout.leftMargin: 12
+                    Layout.rightMargin: 12
+                    color: theme.outlineAlpha(theme.separator)
+                }
+
+                // Bottom Pinned: About Button (Matches main Sidebar Settings position)
+                Item {
+                    id: aboutNavBtn
+                    Layout.fillWidth: true
+                    Layout.preferredHeight: 44
+                    height: 44
+
+                    readonly property bool isCurrent: settingsView.activeTab === 4
+                    readonly property bool isHovered: aboutMouse.containsMouse
+                    readonly property int aboutMatches: settingsView.getTabMatchCount("about")
+
+                    scale: aboutMouse.pressed ? 0.95 : (aboutMouse.containsMouse ? 1.02 : 1.0)
+                    Behavior on scale { enabled: theme.animate; SpringAnimation { spring: 4.0; damping: 0.3 } }
+
+                    Rectangle {
+                        x: 12
+                        width: settingsView.isCompact ? 44 : (aboutNavBtn.width - 24)
+                        height: 44
+                        radius: 22
+                        color: (aboutNavBtn.isHovered && !aboutNavBtn.isCurrent) ? theme.hoverOverlay : "transparent"
+                        Behavior on color { enabled: theme.animate; ColorAnimation { duration: theme.durationFast } }
+                        Behavior on width { enabled: theme.animate; SpringAnimation { spring: 3.5; damping: 0.35 } }
+                    }
+
+                    Item {
+                        id: aboutIconBox
+                        x: 12
+                        width: 44
+                        height: 44
+                        scale: aboutMouse.pressed ? 0.88 : (aboutMouse.containsMouse ? 1.10 : 1.0)
+                        Behavior on scale { enabled: theme.animate; SpringAnimation { spring: 4.5; damping: 0.3 } }
+
+                        LoafIcon {
+                            anchors.centerIn: parent
+                            name: "info"
+                            size: 20
+                            color: aboutNavBtn.isCurrent ? theme.primaryContainerFg : (aboutMouse.containsMouse ? theme.textMain : theme.textMuted)
+                            Behavior on color { enabled: theme.animate; ColorAnimation { duration: theme.durationFast } }
+                        }
+
+                        // Compact search indicator
+                        Rectangle {
+                            visible: settingsView.isCompact && settingsView.searchQuery.length > 0 && aboutNavBtn.aboutMatches > 0
+                            anchors.top: parent.top
+                            anchors.right: parent.right
+                            anchors.topMargin: 4
+                            anchors.rightMargin: 4
+                            width: 8
+                            height: 8
+                            radius: 4
+                            color: aboutNavBtn.isCurrent ? theme.textMain : theme.primary
+                        }
+                    }
+
+                    Text {
+                        anchors.left: aboutIconBox.right
+                        anchors.leftMargin: 8
+                        anchors.right: parent.right
+                        anchors.rightMargin: 12
+                        anchors.verticalCenter: parent.verticalCenter
+                        visible: !settingsView.isCompact
+                        text: qsTr("About")
+                        color: aboutNavBtn.isCurrent ? theme.primaryContainerFg : (aboutMouse.containsMouse ? theme.textMain : theme.textMuted)
+                        font.pixelSize: theme.fs(13)
+                        font.bold: aboutNavBtn.isCurrent
+                        elide: Text.ElideRight
+                        Behavior on color { enabled: theme.animate; ColorAnimation { duration: theme.durationFast } }
+                    }
+
+                    MouseArea {
+                        id: aboutMouse
+                        anchors.fill: parent
+                        hoverEnabled: true
+                        cursorShape: Qt.PointingHandCursor
+                        onEntered: if (settingsView.isCompact) tooltip.show(aboutMouse, qsTr("About"))
+                        onExited: tooltip.hide(aboutMouse)
+                        onClicked: {
+                            if (settingsView.searchQuery.length > 0) {
+                                settingsView.searchCleared();
+                                settingsView.searchQuery = "";
+                            }
+                            settingsView.activeTab = 4;
+                        }
+                    }
+                }
             }
         }
 
-        // Right Content Area
+        // Right Content View
         Rectangle {
             Layout.fillWidth: true
             Layout.fillHeight: true
             radius: theme.radiusL
-            color: theme.surfaceContainerLow
+            color: theme.backdropSurface(theme.surfaceContainerLow)
             clip: true
 
             Behavior on color { enabled: theme.animate; ColorAnimation { duration: theme.durationNormal } }
@@ -199,1097 +418,230 @@ Item {
             ScrollView {
                 id: contentScroll
                 anchors.fill: parent
-                anchors.margins: 22
+                anchors.margins: settingsView.isCompact ? 14 : 22
                 clip: true
                 contentWidth: availableWidth
 
                 ColumnLayout {
                     id: contentColumn
                     width: contentScroll.availableWidth
-                    spacing: 16
+                    spacing: settingsView.isCompact ? 14 : 20
 
-                    // Single Unified Top Header (No dot, no repeated pill)
-                    Text {
-                        text: settingsView.searchQuery.length > 0
-                            ? "Settings"
-                            : (settingsView.activeTab === 0 ? "Interface" : (settingsView.activeTab === 1 ? "Behavior" : (settingsView.activeTab === 2 ? "Accessibility" : (settingsView.activeTab === 3 ? "Experimental" : "About"))))
-                        color: theme.textMain
-                        font.pixelSize: theme.fs(26)
-                        font.bold: true
-                        font.letterSpacing: -0.5
-                        wrapMode: Text.Wrap
+                    // Header Block
+                    ColumnLayout {
                         Layout.fillWidth: true
-                        Layout.minimumWidth: 0
-                    }
+                        Layout.bottomMargin: settingsView.isCompact ? 2 : 8
+                        spacing: 4
 
-                    // Search Results Header (when searching)
-                    RowLayout {
-                        Layout.fillWidth: true
-                        visible: settingsView.searchQuery.length > 0 && settingsView.totalMatches > 0
-                        spacing: 8
+                        RowLayout {
+                            Layout.fillWidth: true
+                            spacing: 12
 
-                        LoafIcon { name: "magnifying-glass"; size: 16; color: theme.primary }
-                        Text {
-                            text: qsTr("Settings search results")
-                            color: theme.textMain
-                            font.pixelSize: theme.fs(16)
-                            font.bold: true
-                        }
-                        Rectangle {
-                            height: 22
-                            width: summaryCountTxt.implicitWidth + 14
-                            radius: theme.radiusFull
-                            color: theme.primaryContainer
+                            LoafIcon {
+                                visible: settingsView.searchQuery.length === 0 && currentTabInfo.iconName.length > 0
+                                name: currentTabInfo.iconName
+                                size: settingsView.isCompact ? 22 : 26
+                                color: theme.primary
+                            }
 
                             Text {
-                                id: summaryCountTxt
-                                anchors.centerIn: parent
-                                text: settingsView.totalMatches + " found"
-                                color: theme.primaryContainerFg
-                                font.pixelSize: theme.fs(11)
+                                text: settingsView.searchQuery.length > 0
+                                    ? qsTr("Settings search results")
+                                    : currentTabInfo.name
+                                color: theme.textMain
+                                font.pixelSize: settingsView.isCompact ? theme.fs(20) : theme.fs(24)
                                 font.bold: true
+                                font.letterSpacing: -0.5
+                                wrapMode: Text.Wrap
+                                Layout.fillWidth: true
                             }
+
+                            Rectangle {
+                                visible: settingsView.searchQuery.length > 0 && settingsView.totalMatches > 0
+                                height: 26
+                                radius: theme.radiusFull
+                                color: theme.primaryContainer
+                                implicitWidth: summaryCountTxt.implicitWidth + 16
+
+                                Text {
+                                    id: summaryCountTxt
+                                    anchors.centerIn: parent
+                                    text: qsTr("%1 found").arg(settingsView.totalMatches)
+                                    color: theme.primaryContainerFg
+                                    font.pixelSize: theme.fs(11)
+                                    font.bold: true
+                                }
+                            }
+                        }
+
+                        Text {
+                            visible: !settingsView.isCompact && settingsView.searchQuery.length === 0 && currentTabInfo.subtitle.length > 0
+                            text: currentTabInfo.subtitle
+                            color: theme.textMuted
+                            font.pixelSize: theme.fs(12)
+                            wrapMode: Text.Wrap
+                            Layout.fillWidth: true
                         }
                     }
 
-                    // Empty Search Results State
+                    // Empty Search Result State
                     ColumnLayout {
                         Layout.fillWidth: true
                         Layout.topMargin: 40
                         Layout.bottomMargin: 40
                         visible: settingsView.searchQuery.length > 0 && settingsView.totalMatches === 0
-                        spacing: 12
+                        spacing: 14
 
                         LoafIcon {
                             Layout.alignment: Qt.AlignHCenter
                             name: "magnifying-glass"
-                            size: 44
+                            size: 48
                             color: theme.textMuted
                         }
 
                         Text {
                             Layout.alignment: Qt.AlignHCenter
-                            text: "No settings found matching \"" + settingsView.searchQuery + "\""
+                            text: qsTr("No settings found matching \"") + settingsView.searchQuery + "\""
                             color: theme.textMuted
                             font.pixelSize: theme.fs(14)
                             font.bold: true
                         }
+
+                        LoafButton {
+                            Layout.alignment: Qt.AlignHCenter
+                            text: qsTr("Clear search")
+                            icon: "x"
+                            variant: "tonal"
+                            onClicked: {
+                                settingsView.searchCleared();
+                                settingsView.searchQuery = "";
+                            }
+                        }
                     }
 
-                    // ==========================================
-                    // TAB 0: INTERFACE
-                    // ==========================================
-                    ColumnLayout {
+                    // Tab 0: Interface
+                    InterfaceTab {
                         id: tabInterface
-                        Layout.fillWidth: true
-                        spacing: 14
-
-                        readonly property bool shown: settingsView.searchQuery.length > 0 ? (settingsView.interfaceMatches > 0) : (settingsView.activeTab === 0)
-                        readonly property real fadeOverlap: settingsView.fadeOverlapAbove(tabInterface)
-                        property real slideOffset: shown ? 0 : 6
-
-                        Layout.topMargin: -fadeOverlap
-                        Layout.bottomMargin: fadeOverlap
-
-                        visible: shown || opacity > 0.001
-                        opacity: shown ? 1.0 : 0.0
-                        enabled: shown
-
-                        Behavior on opacity { enabled: theme.animate; NumberAnimation { duration: 200; easing.type: Easing.OutCubic } }
-                        Behavior on slideOffset { enabled: theme.animate; NumberAnimation { duration: 200; easing.type: Easing.OutCubic } }
-                        transform: Translate { y: tabInterface.slideOffset }
-
-                        // 1. Theme (Auto, Light, Dark)
-                        Rectangle {
-                            visible: settingsView.searchQuery.length === 0 || settingsView.card1Match
-                            Layout.fillWidth: true
-                            Layout.minimumWidth: 0
-                            implicitHeight: schemeRow.implicitHeight + 32
-                            radius: theme.radiusL
-                            color: theme.surfaceContainer
-                            Behavior on color { enabled: theme.animate; ColorAnimation { duration: theme.durationNormal } }
-
-                            ColumnLayout {
-                                id: schemeRow
-                                anchors.fill: parent
-                                anchors.margins: 16
-                                spacing: 12
-
-                                ColumnLayout {
-                                    spacing: 3
-                                    Layout.fillWidth: true
-                                    Text { text: qsTr("Theme"); color: theme.textMain; font.pixelSize: theme.fs(14); font.bold: true; wrapMode: Text.Wrap; Layout.fillWidth: true; Layout.minimumWidth: 0 }
-                                    Text { text: qsTr("Light, dark, or system appearance"); color: theme.textMuted; font.pixelSize: theme.fs(11); wrapMode: Text.Wrap; Layout.fillWidth: true; Layout.minimumWidth: 0 }
-                                }
-
-
-                                Flow {
-                                    id: schemePills
-                                    Layout.fillWidth: true
-                                    spacing: 8
-
-                                    // AUTO PILL
-                                    Item {
-                                        width: 88; height: 38
-                                        Rectangle {
-                                            anchors.fill: parent
-                                            radius: theme.radiusFull
-                                            color: theme.themeMode === "auto" ? theme.primaryContainer : theme.surfaceContainerHigh
-                                            border.width: theme.themeMode === "auto" ? 2 : 1
-                                            border.color: theme.themeMode === "auto" ? theme.primary : theme.outlineVariant
-                                            scale: autoMouse.pressed ? 0.94 : (autoMouse.containsMouse ? 1.04 : 1.0)
-
-                                            Behavior on color { enabled: theme.animate; ColorAnimation { duration: theme.durationFast } }
-                                            Behavior on border.color { enabled: theme.animate; ColorAnimation { duration: theme.durationFast } }
-                                            Behavior on border.width { enabled: theme.animate; NumberAnimation { duration: theme.durationFast } }
-                                            Behavior on scale { enabled: theme.animate; SpringAnimation { spring: 3.5; damping: 0.3 } }
-
-                                            Text {
-                                                anchors.centerIn: parent
-                                                text: qsTr("Auto")
-                                                color: theme.themeMode === "auto" ? theme.primaryContainerFg : theme.textMain
-                                                font.pixelSize: theme.fs(12)
-                                                font.bold: true
-                                                Behavior on color { enabled: theme.animate; ColorAnimation { duration: theme.durationFast } }
-                                            }
-                                        }
-                                        MouseArea {
-                                            id: autoMouse
-                                            anchors.fill: parent
-                                            hoverEnabled: true
-                                            cursorShape: Qt.PointingHandCursor
-                                            onClicked: theme.themeMode = "auto"
-                                        }
-                                    }
-
-                                    // LIGHT PILL
-                                    Item {
-                                        width: 88; height: 38
-                                        Rectangle {
-                                            anchors.fill: parent
-                                            radius: theme.radiusFull
-                                            color: theme.themeMode === "light" ? theme.primaryContainer : theme.surfaceContainerHigh
-                                            border.width: theme.themeMode === "light" ? 2 : 1
-                                            border.color: theme.themeMode === "light" ? theme.primary : theme.outlineVariant
-                                            scale: lightMouse.pressed ? 0.94 : (lightMouse.containsMouse ? 1.04 : 1.0)
-
-                                            Behavior on color { enabled: theme.animate; ColorAnimation { duration: theme.durationFast } }
-                                            Behavior on border.color { enabled: theme.animate; ColorAnimation { duration: theme.durationFast } }
-                                            Behavior on border.width { enabled: theme.animate; NumberAnimation { duration: theme.durationFast } }
-                                            Behavior on scale { enabled: theme.animate; SpringAnimation { spring: 3.5; damping: 0.3 } }
-
-                                            Text {
-                                                anchors.centerIn: parent
-                                                text: qsTr("Light")
-                                                color: theme.themeMode === "light" ? theme.primaryContainerFg : theme.textMain
-                                                font.pixelSize: theme.fs(12)
-                                                font.bold: true
-                                                Behavior on color { enabled: theme.animate; ColorAnimation { duration: theme.durationFast } }
-                                            }
-                                        }
-                                        MouseArea {
-                                            id: lightMouse
-                                            anchors.fill: parent
-                                            hoverEnabled: true
-                                            cursorShape: Qt.PointingHandCursor
-                                            onClicked: theme.themeMode = "light"
-                                        }
-                                    }
-
-                                    // DARK PILL
-                                    Item {
-                                        width: 88; height: 38
-                                        Rectangle {
-                                            anchors.fill: parent
-                                            radius: theme.radiusFull
-                                            color: theme.themeMode === "dark" ? theme.primaryContainer : theme.surfaceContainerHigh
-                                            border.width: theme.themeMode === "dark" ? 2 : 1
-                                            border.color: theme.themeMode === "dark" ? theme.primary : theme.outlineVariant
-                                            scale: darkMouse.pressed ? 0.94 : (darkMouse.containsMouse ? 1.04 : 1.0)
-
-                                            Behavior on color { enabled: theme.animate; ColorAnimation { duration: theme.durationFast } }
-                                            Behavior on border.color { enabled: theme.animate; ColorAnimation { duration: theme.durationFast } }
-                                            Behavior on border.width { enabled: theme.animate; NumberAnimation { duration: theme.durationFast } }
-                                            Behavior on scale { enabled: theme.animate; SpringAnimation { spring: 3.5; damping: 0.3 } }
-
-                                            Text {
-                                                anchors.centerIn: parent
-                                                text: qsTr("Dark")
-                                                color: theme.themeMode === "dark" ? theme.primaryContainerFg : theme.textMain
-                                                font.pixelSize: theme.fs(12)
-                                                font.bold: true
-                                                Behavior on color { enabled: theme.animate; ColorAnimation { duration: theme.durationFast } }
-                                            }
-                                        }
-                                        MouseArea {
-                                            id: darkMouse
-                                            anchors.fill: parent
-                                            hoverEnabled: true
-                                            cursorShape: Qt.PointingHandCursor
-                                            onClicked: theme.themeMode = "dark"
-                                        }
-                                    }
-                                }
-                            }
+                        searchQuery: settingsView.searchQuery
+                        visible: settingsView.searchQuery.length > 0
+                            ? (tabInterface.matchCount > 0)
+                            : (settingsView.activeTab === 0)
+                        opacity: (settingsView.searchQuery.length > 0 || settingsView.activeTab === 0) ? 1.0 : 0.0
+                        transform: Translate {
+                            y: (settingsView.searchQuery.length > 0 || settingsView.activeTab === 0) ? 0 : 8
+                            Behavior on y { enabled: theme.animate; NumberAnimation { duration: 200; easing.type: Easing.OutCubic } }
                         }
-
-                        // 2. Palette Picker (Pill Swatches)
-                        Rectangle {
-                            visible: settingsView.searchQuery.length === 0 || settingsView.card2Match
-                            Layout.fillWidth: true
-                            Layout.minimumWidth: 0
-                            implicitHeight: palContentCol.implicitHeight + 32
-                            radius: theme.radiusL
-                            color: theme.surfaceContainer
-                            Behavior on color { enabled: theme.animate; ColorAnimation { duration: theme.durationNormal } }
-
-                            ColumnLayout {
-                                id: palContentCol
-                                anchors.fill: parent
-                                anchors.margins: 16
-                                spacing: 14
-
-                                ColumnLayout {
-                                    spacing: 2
-                                    Text { text: qsTr("Color palette"); color: theme.textMain; font.pixelSize: theme.fs(14); font.bold: true }
-                                    Text { text: qsTr("Wallpaper extraction & community color schemes"); color: theme.textMuted; font.pixelSize: theme.fs(11) }
-                                }
-
-                                Flow {
-                                    Layout.fillWidth: true
-                                    spacing: 10
-
-                                    Repeater {
-                                        model: [
-                                            { id: "unia", label: qsTr("Unia") },
-                                            { id: "wallpaper", label: qsTr("Wallpaper") },
-                                            { id: "lavender", label: qsTr("Loaf Violet") },
-                                            { id: "amber", label: qsTr("Loaf Amber") },
-                                            { id: "catppuccin", label: qsTr("Catppuccin") },
-                                            { id: "nord", label: qsTr("Nord") },
-                                            { id: "tokyonight", label: qsTr("Tokyo Night") },
-                                            { id: "gruvbox", label: qsTr("Gruvbox") },
-                                            { id: "rosepine", label: qsTr("Rosé Pine") }
-                                        ]
-
-                                        delegate: Item {
-                                            width: 126; height: 38
-
-                                            readonly property var swatch: theme.palettes[modelData.id] ? theme.palettes[modelData.id] : theme.palettes["unia"]
-
-                                            Rectangle {
-                                                anchors.fill: parent
-                                                radius: theme.radiusFull
-                                                color: theme.accentName === modelData.id ? theme.primaryContainer : theme.surfaceContainerHigh
-                                                border.width: theme.accentName === modelData.id ? 2 : 1
-                                                border.color: theme.accentName === modelData.id ? theme.primary : theme.outlineVariant
-
-                                                scale: palMouse.pressed ? 0.94 : (palMouse.containsMouse ? 1.04 : 1.0)
-
-                                                Behavior on color { enabled: theme.animate; ColorAnimation { duration: theme.durationFast } }
-                                                Behavior on border.color { enabled: theme.animate; ColorAnimation { duration: theme.durationFast } }
-                                                Behavior on border.width { enabled: theme.animate; NumberAnimation { duration: theme.durationFast } }
-                                                Behavior on scale { enabled: theme.animate; SpringAnimation { spring: 3.5; damping: 0.3 } }
-
-                                                RowLayout {
-                                                    anchors.centerIn: parent
-                                                    spacing: 8
-
-                                                    Rectangle {
-                                                        width: 12; height: 12; radius: 6
-                                                        color: swatch.darkPrimary
-                                                    }
-                                                    Text {
-                                                        text: modelData.label
-                                                        color: theme.accentName === modelData.id ? theme.primaryContainerFg : theme.textMain
-                                                        font.pixelSize: theme.fs(11)
-                                                        font.bold: theme.accentName === modelData.id
-                                                        Behavior on color { enabled: theme.animate; ColorAnimation { duration: theme.durationFast } }
-                                                    }
-                                                }
-                                            }
-
-                                            MouseArea {
-                                                id: palMouse
-                                                anchors.fill: parent
-                                                hoverEnabled: true
-                                                cursorShape: Qt.PointingHandCursor
-                                                onClicked: theme.accentName = modelData.id
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-
-                        // 3. Transparency of the window ground and panels (Hyprland blurs behind them)
-                        SettingCard {
-                            visible: settingsView.searchQuery.length === 0 || settingsView.card19Match
-                            title: qsTr("Transparency")
-                            subtitle: qsTr("Frosted glass for the window and its panels; menus and dialogs stay solid")
-                            LoafSegmented {
-                                Layout.preferredWidth: 300
-                                options: [{ value: 1.0, label: qsTr("Off") }, { value: 0.75, label: qsTr("Low") }, { value: 0.55, label: qsTr("Medium") }, { value: 0.35, label: qsTr("Unia") }]
-                                value: theme.glassOpacity
-                                onSelected: function(v) { theme.glassOpacity = v; }
-                            }
-                        }
-
-                        // 4. Icon Style (Reveals Adwaita & System when experimental enabled)
-                        Rectangle {
-                            visible: theme.showExperimentalIcons && (settingsView.searchQuery.length === 0 || settingsView.card4Match)
-                            Layout.fillWidth: true
-                            Layout.minimumWidth: 0
-                            implicitHeight: iconSrcRow.implicitHeight + 32
-                            radius: theme.radiusL
-                            color: theme.surfaceContainer
-                            Behavior on color { enabled: theme.animate; ColorAnimation { duration: theme.durationNormal } }
-
-                            ColumnLayout {
-                                id: iconSrcRow
-                                anchors.fill: parent
-                                anchors.margins: 16
-                                spacing: 12
-
-                                ColumnLayout {
-                                    spacing: 3
-                                    Layout.fillWidth: true
-                                    Text { text: qsTr("Icon style"); color: theme.textMain; font.pixelSize: theme.fs(14); font.bold: true; wrapMode: Text.Wrap; Layout.fillWidth: true; Layout.minimumWidth: 0 }
-                                    Text { text: qsTr("Phosphor, system theme, or GNOME Adwaita"); color: theme.textMuted; font.pixelSize: theme.fs(11); wrapMode: Text.Wrap; Layout.fillWidth: true; Layout.minimumWidth: 0 }
-                                }
-
-
-                                Flow {
-                                    id: iconPills
-                                    Layout.fillWidth: true
-                                    spacing: 8
-
-                                    Item {
-                                        width: 90; height: 38
-                                        Rectangle {
-                                            anchors.fill: parent; radius: theme.radiusFull
-                                            color: theme.iconSource === "phosphor" ? theme.primaryContainer : theme.surfaceContainerHigh
-                                            border.width: theme.iconSource === "phosphor" ? 2 : 1
-                                            border.color: theme.iconSource === "phosphor" ? theme.primary : theme.outlineVariant
-                                            Behavior on color { enabled: theme.animate; ColorAnimation { duration: theme.durationFast } }
-                                            Behavior on border.color { enabled: theme.animate; ColorAnimation { duration: theme.durationFast } }
-                                            Behavior on border.width { enabled: theme.animate; NumberAnimation { duration: theme.durationFast } }
-                                            Text { anchors.centerIn: parent; text: qsTr("Phosphor"); color: theme.iconSource === "phosphor" ? theme.primaryContainerFg : theme.textMain; font.pixelSize: theme.fs(11); font.bold: true; Behavior on color { enabled: theme.animate; ColorAnimation { duration: theme.durationFast } } }
-                                        }
-                                        MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: theme.iconSource = "phosphor" }
-                                    }
-
-                                    Item {
-                                        width: 90; height: 38
-                                        Rectangle {
-                                            anchors.fill: parent; radius: theme.radiusFull
-                                            color: theme.iconSource === "system" ? theme.primaryContainer : theme.surfaceContainerHigh
-                                            border.width: theme.iconSource === "system" ? 2 : 1
-                                            border.color: theme.iconSource === "system" ? theme.primary : theme.outlineVariant
-                                            Behavior on color { enabled: theme.animate; ColorAnimation { duration: theme.durationFast } }
-                                            Behavior on border.color { enabled: theme.animate; ColorAnimation { duration: theme.durationFast } }
-                                            Behavior on border.width { enabled: theme.animate; NumberAnimation { duration: theme.durationFast } }
-                                            Text { anchors.centerIn: parent; text: qsTr("System"); color: theme.iconSource === "system" ? theme.primaryContainerFg : theme.textMain; font.pixelSize: theme.fs(11); font.bold: true; Behavior on color { enabled: theme.animate; ColorAnimation { duration: theme.durationFast } } }
-                                        }
-                                        MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: theme.iconSource = "system" }
-                                    }
-
-                                    Item {
-                                        width: 90; height: 38
-                                        Rectangle {
-                                            anchors.fill: parent; radius: theme.radiusFull
-                                            color: theme.iconSource === "adwaita" ? theme.primaryContainer : theme.surfaceContainerHigh
-                                            border.width: theme.iconSource === "adwaita" ? 2 : 1
-                                            border.color: theme.iconSource === "adwaita" ? theme.primary : theme.outlineVariant
-                                            Behavior on color { enabled: theme.animate; ColorAnimation { duration: theme.durationFast } }
-                                            Behavior on border.color { enabled: theme.animate; ColorAnimation { duration: theme.durationFast } }
-                                            Behavior on border.width { enabled: theme.animate; NumberAnimation { duration: theme.durationFast } }
-                                            Text { anchors.centerIn: parent; text: qsTr("Adwaita"); color: theme.iconSource === "adwaita" ? theme.primaryContainerFg : theme.textMain; font.pixelSize: theme.fs(11); font.bold: true; Behavior on color { enabled: theme.animate; ColorAnimation { duration: theme.durationFast } } }
-                                        }
-                                        MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: theme.iconSource = "adwaita" }
-                                    }
-                                }
-                            }
-                        }
-
-                        // 5. Phosphor Weight Variant
-                        Rectangle {
-                            visible: settingsView.searchQuery.length === 0 || settingsView.card5Match
-                            Layout.fillWidth: true
-                            Layout.minimumWidth: 0
-                            implicitHeight: weightCol.implicitHeight + 32
-                            radius: theme.radiusL
-                            color: theme.surfaceContainer
-                            Behavior on color { enabled: theme.animate; ColorAnimation { duration: theme.durationNormal } }
-
-                            ColumnLayout {
-                                id: weightCol
-                                anchors.fill: parent
-                                anchors.margins: 16
-                                spacing: 14
-
-                                ColumnLayout {
-                                    spacing: 3
-                                    Layout.fillWidth: true
-                                    Text { text: qsTr("Phosphor icon weight"); color: theme.textMain; font.pixelSize: theme.fs(14); font.bold: true; wrapMode: Text.Wrap; Layout.fillWidth: true; Layout.minimumWidth: 0 }
-                                    Text { text: qsTr("Thin, light, regular, bold, fill, or duotone"); color: theme.textMuted; font.pixelSize: theme.fs(11); wrapMode: Text.Wrap; Layout.fillWidth: true; Layout.minimumWidth: 0 }
-                                }
-
-                                Flow {
-                                    Layout.fillWidth: true
-                                    spacing: 8
-
-                                    Repeater {
-                                        model: [
-                                            { id: "thin", label: qsTr("Thin") },
-                                            { id: "light", label: qsTr("Light") },
-                                            { id: "regular", label: qsTr("Regular") },
-                                            { id: "bold", label: qsTr("Bold") },
-                                            { id: "fill", label: qsTr("Fill") },
-                                            { id: "duotone", label: qsTr("Duotone") }
-                                        ]
-
-                                        delegate: Item {
-                                            width: 86; height: 36
-                                            Rectangle {
-                                                anchors.fill: parent
-                                                radius: theme.radiusFull
-                                                color: theme.phosphorWeight === modelData.id ? theme.primaryContainer : theme.surfaceContainerHigh
-                                                border.color: theme.primary
-                                                border.width: theme.phosphorWeight === modelData.id ? 2 : 0
-
-                                                scale: wMouse.pressed ? 0.94 : (wMouse.containsMouse ? 1.04 : 1.0)
-                                                Behavior on scale { enabled: theme.animate; SpringAnimation { spring: 3.5; damping: 0.3 } }
-
-                                                Text {
-                                                    anchors.centerIn: parent
-                                                    text: modelData.label
-                                                    color: theme.phosphorWeight === modelData.id ? theme.primaryContainerFg : theme.textMain
-                                                    font.pixelSize: theme.fs(11)
-                                                    font.bold: theme.phosphorWeight === modelData.id
-                                                }
-                                            }
-                                            MouseArea {
-                                                id: wMouse
-                                                anchors.fill: parent
-                                                hoverEnabled: true
-                                                cursorShape: Qt.PointingHandCursor
-                                                onClicked: theme.phosphorWeight = modelData.id
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
+                        Behavior on opacity { enabled: theme.animate; NumberAnimation { duration: 180; easing.type: Easing.OutCubic } }
                     }
 
-
-                    // ==========================================
-                    // TAB 1: BEHAVIOR
-                    // ==========================================
-                    ColumnLayout {
+                    // Tab 1: Behavior
+                    BehaviorTab {
                         id: tabBehavior
-                        Layout.fillWidth: true
-                        spacing: 14
-
-                        readonly property bool shown: settingsView.searchQuery.length > 0 ? (settingsView.behaviorMatches > 0) : (settingsView.activeTab === 1)
-                        readonly property real fadeOverlap: settingsView.fadeOverlapAbove(tabBehavior)
-                        property real slideOffset: shown ? 0 : 6
-
-                        Layout.topMargin: -fadeOverlap
-                        Layout.bottomMargin: fadeOverlap
-
-                        visible: shown || opacity > 0.001
-                        opacity: shown ? 1.0 : 0.0
-                        enabled: shown
-
-                        Behavior on opacity { enabled: theme.animate; NumberAnimation { duration: 200; easing.type: Easing.OutCubic } }
-                        Behavior on slideOffset { enabled: theme.animate; NumberAnimation { duration: 200; easing.type: Easing.OutCubic } }
-                        transform: Translate { y: tabBehavior.slideOffset }
-
-                        // Left-Click Drag Action
-                        Rectangle {
-                            visible: settingsView.searchQuery.length === 0 || settingsView.card6Match
-                            Layout.fillWidth: true
-                            Layout.minimumWidth: 0
-                            implicitHeight: dragActionRow.implicitHeight + 32
-                            radius: theme.radiusL
-                            color: theme.surfaceContainer
-                            Behavior on color { enabled: theme.animate; ColorAnimation { duration: theme.durationNormal } }
-
-                            ColumnLayout {
-                                id: dragActionRow
-                                anchors.fill: parent
-                                anchors.margins: 16
-                                spacing: 12
-
-                                ColumnLayout {
-                                    spacing: 3
-                                    Layout.fillWidth: true
-                                    Text { text: qsTr("Left-click drag action"); color: theme.textMain; font.pixelSize: theme.fs(14); font.bold: true; wrapMode: Text.Wrap; Layout.fillWidth: true; Layout.minimumWidth: 0 }
-                                    Text { text: qsTr("Choose whether dragging selects items or pans the view"); color: theme.textMuted; font.pixelSize: theme.fs(11); wrapMode: Text.Wrap; Layout.fillWidth: true; Layout.minimumWidth: 0 }
-                                }
-
-
-                                Flow {
-                                    id: dragPills
-                                    Layout.fillWidth: true
-                                    spacing: 8
-
-                                    Item {
-                                        width: 130; height: 38
-                                        Rectangle {
-                                            anchors.fill: parent; radius: theme.radiusFull
-                                            color: theme.dragAction === "select" ? theme.primaryContainer : theme.surfaceContainerHigh
-                                            border.color: theme.primary
-                                            border.width: theme.dragAction === "select" ? 2 : 0
-                                            Text { anchors.centerIn: parent; text: qsTr("Selection Box"); color: theme.dragAction === "select" ? theme.primaryContainerFg : theme.textMain; font.pixelSize: theme.fs(11); font.bold: true }
-                                        }
-                                        MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: theme.dragAction = "select" }
-                                    }
-
-                                    Item {
-                                        width: 100; height: 38
-                                        Rectangle {
-                                            anchors.fill: parent; radius: theme.radiusFull
-                                            color: theme.dragAction === "scroll" ? theme.primaryContainer : theme.surfaceContainerHigh
-                                            border.color: theme.primary
-                                            border.width: theme.dragAction === "scroll" ? 2 : 0
-                                            Text { anchors.centerIn: parent; text: qsTr("Pan View"); color: theme.dragAction === "scroll" ? theme.primaryContainerFg : theme.textMain; font.pixelSize: theme.fs(11); font.bold: true }
-                                        }
-                                        MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: theme.dragAction = "scroll" }
-                                    }
-                                }
-                            }
+                        searchQuery: settingsView.searchQuery
+                        visible: settingsView.searchQuery.length > 0
+                            ? (tabBehavior.matchCount > 0)
+                            : (settingsView.activeTab === 1)
+                        opacity: (settingsView.searchQuery.length > 0 || settingsView.activeTab === 1) ? 1.0 : 0.0
+                        transform: Translate {
+                            y: (settingsView.searchQuery.length > 0 || settingsView.activeTab === 1) ? 0 : 8
+                            Behavior on y { enabled: theme.animate; NumberAnimation { duration: 200; easing.type: Easing.OutCubic } }
                         }
-
-                        // Picture Thumbnails
-                        Rectangle {
-                            visible: settingsView.searchQuery.length === 0 || settingsView.card7Match
-                            Layout.fillWidth: true
-                            Layout.minimumWidth: 0
-                            implicitHeight: thumbRow.implicitHeight + 32
-                            radius: theme.radiusL
-                            color: theme.surfaceContainer
-                            Behavior on color { enabled: theme.animate; ColorAnimation { duration: theme.durationNormal } }
-
-                            GridLayout {
-                                id: thumbRow
-                                anchors.fill: parent
-                                anchors.margins: 16
-                                columnSpacing: 14
-                                rowSpacing: 10
-                                columns: (width - 14 - thumbSwitch.implicitWidth) >= 170 ? 2 : 1
-
-                                ColumnLayout {
-                                    spacing: 3
-                                    Layout.fillWidth: true
-                                    Text { text: qsTr("Picture Thumbnails"); color: theme.textMain; font.pixelSize: theme.fs(14); font.bold: true; wrapMode: Text.Wrap; Layout.fillWidth: true; Layout.minimumWidth: 0 }
-                                    Text { text: qsTr("Show preview thumbnails for pictures, SVGs, and creative files"); color: theme.textMuted; font.pixelSize: theme.fs(11); wrapMode: Text.Wrap; Layout.fillWidth: true; Layout.minimumWidth: 0 }
-                                }
-
-                                LoafSwitch {
-                                    id: thumbSwitch
-                                    Layout.alignment: Qt.AlignRight
-                                    checked: theme.showThumbnails
-                                    onToggled: theme.showThumbnails = checked
-                                }
-                            }
-
-                            Connections {
-                                target: theme
-                                function onShowThumbnailsChanged() {
-                                    if (thumbSwitch.checked !== theme.showThumbnails)
-                                        thumbSwitch.checked = theme.showThumbnails
-                                }
-                            }
-                        }
-
-                        // Show Hidden Files
-                        Rectangle {
-                            visible: settingsView.searchQuery.length === 0 || settingsView.card8Match
-                            Layout.fillWidth: true
-                            Layout.minimumWidth: 0
-                            implicitHeight: hiddenRow.implicitHeight + 32
-                            radius: theme.radiusL
-                            color: theme.surfaceContainer
-                            Behavior on color { enabled: theme.animate; ColorAnimation { duration: theme.durationNormal } }
-
-                            GridLayout {
-                                id: hiddenRow
-                                anchors.fill: parent
-                                anchors.margins: 16
-                                columnSpacing: 14
-                                rowSpacing: 10
-                                columns: (width - 14 - hiddenSwitch.implicitWidth) >= 170 ? 2 : 1
-
-                                ColumnLayout {
-                                    spacing: 3
-                                    Layout.fillWidth: true
-                                    Text { text: qsTr("Show Hidden Files"); color: theme.textMain; font.pixelSize: theme.fs(14); font.bold: true; wrapMode: Text.Wrap; Layout.fillWidth: true; Layout.minimumWidth: 0 }
-                                    Text { text: qsTr("Display files and folders starting with a dot"); color: theme.textMuted; font.pixelSize: theme.fs(11); wrapMode: Text.Wrap; Layout.fillWidth: true; Layout.minimumWidth: 0 }
-                                }
-
-                                LoafSwitch {
-                                    id: hiddenSwitch
-                                    Layout.alignment: Qt.AlignRight
-                                    checked: window.showHidden
-                                    onToggled: window.toggleShowHidden()
-                                }
-                            }
-
-                            Connections {
-                                target: engine
-                                function onShow_hiddenChanged() {
-                                    if (hiddenSwitch.checked !== window.showHidden)
-                                        hiddenSwitch.checked = window.showHidden
-                                }
-                            }
-                        }
-
-                        // Disambiguate duplicate names in search
-                        Rectangle {
-                            visible: settingsView.searchQuery.length === 0 || settingsView.card9Match
-                            Layout.fillWidth: true
-                            Layout.minimumWidth: 0
-                            implicitHeight: disambigRow.implicitHeight + 32
-                            radius: theme.radiusL
-                            color: theme.surfaceContainer
-                            Behavior on color { enabled: theme.animate; ColorAnimation { duration: theme.durationNormal } }
-
-                            GridLayout {
-                                id: disambigRow
-                                anchors.fill: parent
-                                anchors.margins: 16
-                                columnSpacing: 14
-                                rowSpacing: 10
-                                columns: (width - 14 - disambigSwitch.implicitWidth) >= 170 ? 2 : 1
-
-                                ColumnLayout {
-                                    spacing: 3
-                                    Layout.fillWidth: true
-                                    Text { text: qsTr("Disambiguate duplicate names"); color: theme.textMain; font.pixelSize: theme.fs(14); font.bold: true; wrapMode: Text.Wrap; Layout.fillWidth: true; Layout.minimumWidth: 0 }
-                                    Text { text: qsTr("Show parent folder prefix for duplicate search results"); color: theme.textMuted; font.pixelSize: theme.fs(11); wrapMode: Text.Wrap; Layout.fillWidth: true; Layout.minimumWidth: 0 }
-                                }
-
-                                LoafSwitch {
-                                    id: disambigSwitch
-                                    Layout.alignment: Qt.AlignRight
-                                    checked: core.get_setting("disambiguate_duplicates") !== "false"
-                                    onToggled: core.set_setting("disambiguate_duplicates", checked ? "true" : "false")
-                                }
-                            }
-
-
-                        }
-                        SettingCard {
-                            visible: settingsView.searchQuery.length === 0 || settingsView.card16Match
-                            title: qsTr("Restore last session")
-                            subtitle: qsTr("Reopen your tabs, folders and window size on start")
-                            LoafSwitch {
-                                checked: core.get_setting("restoreSession") !== "false"
-                                onToggled: function(c) { core.set_setting("restoreSession", c ? "true" : "false"); }
-                            }
-                        }
-
-                        SettingCard {
-                            visible: settingsView.searchQuery.length === 0 || settingsView.card17Match
-                            title: qsTr("Click selected name to rename")
-                            subtitle: qsTr("A second single click on a selected item's name starts renaming (F2 always works)")
-                            LoafSwitch {
-                                checked: theme.clickToRename
-                                onToggled: function(c) { theme.clickToRename = c; }
-                            }
-                        }
-
-                        SettingCard {
-                            visible: settingsView.searchQuery.length === 0 || settingsView.card18Match
-                            title: qsTr("Search inside files")
-                            subtitle: qsTr("Subfolder / everywhere searches also match text inside files (slower)")
-                            LoafSwitch {
-                                checked: theme.searchContents
-                                onToggled: function(c) { theme.searchContents = c; }
-                            }
-                        }
-
-                        SettingCard {
-                            title: qsTr("Navigation sidebar")
-                            subtitle: qsTr("Show, hide and reorder places, drives and bookmarks in the left rail")
-                            LoafButton {
-                                text: qsTr("Customize Sidebar…")
-                                icon: "sliders-horizontal"
-                                variant: "tonal"
-                                onClicked: customizePlaces.open()
-                            }
-                        }
-
-                        SettingCard {
-                            title: qsTr("Context menu layout")
-                            subtitle: qsTr("Minimal hides items with common shortcuts (Open, Cut, Copy, Delete, etc.)")
-                            RowLayout {
-                                spacing: 8
-                                LoafSegmented {
-                                    Layout.preferredWidth: 260
-                                    options: [
-                                        { value: "full", label: qsTr("Full") },
-                                        { value: "minimal", label: qsTr("Minimal") },
-                                        { value: "custom", label: qsTr("Custom") }
-                                    ]
-                                    value: theme.contextMenuMode
-                                    onSelected: function(v) {
-                                        theme.contextMenuMode = v;
-                                        if (v === "custom")
-                                            customizeContextMenuDialog.open();
-                                    }
-                                }
-                                LoafButton {
-                                    visible: theme.contextMenuMode === "custom"
-                                    text: qsTr("Edit…")
-                                    icon: "sliders"
-                                    variant: "tonal"
-                                    onClicked: customizeContextMenuDialog.open()
-                                }
-                            }
-                        }
+                        Behavior on opacity { enabled: theme.animate; NumberAnimation { duration: 180; easing.type: Easing.OutCubic } }
                     }
 
-
-                    // ==========================================
-                    // TAB 2: ACCESSIBILITY
-                    // ==========================================
-                    ColumnLayout {
+                    // Tab 2: Accessibility
+                    AccessibilityTab {
                         id: tabAccessibility
-                        Layout.fillWidth: true
-                        spacing: 14
-
-                        readonly property bool shown: settingsView.searchQuery.length > 0 ? (settingsView.accessibilityMatches > 0) : (settingsView.activeTab === 2)
-                        readonly property real fadeOverlap: settingsView.fadeOverlapAbove(tabAccessibility)
-                        property real slideOffset: shown ? 0 : 6
-
-                        Layout.topMargin: -fadeOverlap
-                        Layout.bottomMargin: fadeOverlap
-
-                        visible: shown || opacity > 0.001
-                        opacity: shown ? 1.0 : 0.0
-                        enabled: shown
-
-                        Behavior on opacity { enabled: theme.animate; NumberAnimation { duration: 200; easing.type: Easing.OutCubic } }
-                        Behavior on slideOffset { enabled: theme.animate; NumberAnimation { duration: 200; easing.type: Easing.OutCubic } }
-                        transform: Translate { y: tabAccessibility.slideOffset }
-
-                        // Performance: low-power mode
-                        SettingCard {
-                            visible: settingsView.searchQuery.length === 0 || settingsView.card13Match
-                            title: qsTr("Low-power mode")
-                            subtitle: (theme.softwareRendering || core.low_end_hardware)
-                                ? qsTr("This computer looks low-end (no GPU acceleration, little memory or few cores), so Auto keeps it on. Disables animations, thumbnail masks and background effects.")
-                                : qsTr("Disables animations, thumbnail masks and background effects for older or battery-powered machines")
-                            LoafSegmented {
-                                Layout.preferredWidth: 220
-                                options: [{ value: "auto", label: qsTr("Auto") }, { value: "on", label: qsTr("On") }, { value: "off", label: qsTr("Off") }]
-                                value: theme.lowPowerSetting
-                                onSelected: function(v) { theme.lowPowerSetting = v; }
-                            }
+                        searchQuery: settingsView.searchQuery
+                        visible: settingsView.searchQuery.length > 0
+                            ? (tabAccessibility.matchCount > 0)
+                            : (settingsView.activeTab === 2)
+                        opacity: (settingsView.searchQuery.length > 0 || settingsView.activeTab === 2) ? 1.0 : 0.0
+                        transform: Translate {
+                            y: (settingsView.searchQuery.length > 0 || settingsView.activeTab === 2) ? 0 : 8
+                            Behavior on y { enabled: theme.animate; NumberAnimation { duration: 200; easing.type: Easing.OutCubic } }
                         }
-
-                        SettingCard {
-                            visible: settingsView.searchQuery.length === 0 || settingsView.card14Match
-                            title: qsTr("Reduce motion")
-                            subtitle: qsTr("Turn off springs, fades and slide transitions")
-                            LoafSwitch {
-                                checked: theme.reduceMotionSetting
-                                onToggled: function(c) { theme.reduceMotionSetting = c; }
-                            }
-                        }
-
-                        SettingCard {
-                            visible: settingsView.searchQuery.length === 0 || settingsView.card15Match
-                            title: qsTr("Text size")
-                            subtitle: qsTr("Scales all text; also follows the desktop font size")
-                            LoafSegmented {
-                                Layout.preferredWidth: 260
-                                options: [{ value: 0.9, label: "90%" }, { value: 1.0, label: "100%" }, { value: 1.15, label: "115%" }, { value: 1.3, label: "130%" }]
-                                value: theme.fontScaleSetting
-                                onSelected: function(v) { theme.fontScaleSetting = v; }
-                            }
-                        }
+                        Behavior on opacity { enabled: theme.animate; NumberAnimation { duration: 180; easing.type: Easing.OutCubic } }
                     }
 
+                    // Tab 5: Share (only when Cloudflare sharing is enabled)
+                    ShareTab {
+                        id: tabShare
+                        searchQuery: settingsView.searchQuery
+                        visible: theme.shareViaLinkEnabled
+                            && (settingsView.searchQuery.length > 0
+                                ? (tabShare.matchCount > 0)
+                                : (settingsView.activeTab === 5))
+                        opacity: (settingsView.searchQuery.length > 0 || settingsView.activeTab === 5) ? 1.0 : 0.0
+                        transform: Translate {
+                            y: (settingsView.searchQuery.length > 0 || settingsView.activeTab === 5) ? 0 : 8
+                            Behavior on y { enabled: theme.animate; NumberAnimation { duration: 200; easing.type: Easing.OutCubic } }
+                        }
+                        Behavior on opacity { enabled: theme.animate; NumberAnimation { duration: 180; easing.type: Easing.OutCubic } }
+                    }
 
-                    // ==========================================
-                    // TAB 3: EXPERIMENTAL
-                    // ==========================================
-                    ColumnLayout {
+                    // Tab 6: Network
+                    NetworkTab {
+                        id: tabNetwork
+                        searchQuery: settingsView.searchQuery
+                        onOpenNetworkEditorRequested: function(p) { settingsView.openNetworkEditorRequested(p); }
+                        onRemoveNetworkDriveRequested: function(id, l) { settingsView.removeNetworkDriveRequested(id, l); }
+                        visible: settingsView.searchQuery.length > 0
+                            ? (tabNetwork.matchCount > 0)
+                            : (settingsView.activeTab === 6)
+                        opacity: (settingsView.searchQuery.length > 0 || settingsView.activeTab === 6) ? 1.0 : 0.0
+                        transform: Translate {
+                            y: (settingsView.searchQuery.length > 0 || settingsView.activeTab === 6) ? 0 : 8
+                            Behavior on y { enabled: theme.animate; NumberAnimation { duration: 200; easing.type: Easing.OutCubic } }
+                        }
+                        Behavior on opacity { enabled: theme.animate; NumberAnimation { duration: 180; easing.type: Easing.OutCubic } }
+                    }
+
+                    // Tab 3: Experimental
+                    ExperimentalTab {
                         id: tabExperimental
-                        Layout.fillWidth: true
-                        spacing: 14
-
-                        readonly property bool shown: settingsView.searchQuery.length > 0 ? (settingsView.experimentalMatches > 0) : (settingsView.activeTab === 3)
-                        readonly property real fadeOverlap: settingsView.fadeOverlapAbove(tabExperimental)
-                        property real slideOffset: shown ? 0 : 6
-
-                        Layout.topMargin: -fadeOverlap
-                        Layout.bottomMargin: fadeOverlap
-
-                        visible: shown || opacity > 0.001
-                        opacity: shown ? 1.0 : 0.0
-                        enabled: shown
-
-                        Behavior on opacity { enabled: theme.animate; NumberAnimation { duration: 200; easing.type: Easing.OutCubic } }
-                        Behavior on slideOffset { enabled: theme.animate; NumberAnimation { duration: 200; easing.type: Easing.OutCubic } }
-                        transform: Translate { y: tabExperimental.slideOffset }
-
-                        // More Icon Styles (System & Adwaita)
-                        Rectangle {
-                            Layout.fillWidth: true
-                            Layout.minimumWidth: 0
-                            implicitHeight: expIconRow.implicitHeight + 32
-                            radius: theme.radiusL
-                            color: theme.surfaceContainer
-                            Behavior on color { enabled: theme.animate; ColorAnimation { duration: theme.durationNormal } }
-
-                            GridLayout {
-                                id: expIconRow
-                                anchors.fill: parent
-                                anchors.margins: 16
-                                columnSpacing: 14
-                                rowSpacing: 10
-                                columns: (width - 14 - expIconSwitch.implicitWidth) >= 170 ? 2 : 1
-
-                                ColumnLayout {
-                                    spacing: 3
-                                    Layout.fillWidth: true
-                                    Text { text: qsTr("More icon styles"); color: theme.textMain; font.pixelSize: theme.fs(14); font.bold: true; wrapMode: Text.Wrap; Layout.fillWidth: true; Layout.minimumWidth: 0 }
-                                    Text { text: qsTr("Enable System desktop theme and GNOME Adwaita vector icons"); color: theme.textMuted; font.pixelSize: theme.fs(11); wrapMode: Text.Wrap; Layout.fillWidth: true; Layout.minimumWidth: 0 }
-                                }
-
-                                LoafSwitch {
-                                    id: expIconSwitch
-                                    Layout.alignment: Qt.AlignRight
-                                    checked: theme.showExperimentalIcons
-                                    onToggled: theme.showExperimentalIcons = checked
-                                }
-                            }
-
-                            Connections {
-                                target: theme
-                                function onShowExperimentalIconsChanged() {
-                                    if (expIconSwitch.checked !== theme.showExperimentalIcons)
-                                        expIconSwitch.checked = theme.showExperimentalIcons
-                                }
-                            }
+                        searchQuery: settingsView.searchQuery
+                        visible: settingsView.searchQuery.length > 0
+                            ? (tabExperimental.matchCount > 0)
+                            : (settingsView.activeTab === 3)
+                        opacity: (settingsView.searchQuery.length > 0 || settingsView.activeTab === 3) ? 1.0 : 0.0
+                        transform: Translate {
+                            y: (settingsView.searchQuery.length > 0 || settingsView.activeTab === 3) ? 0 : 8
+                            Behavior on y { enabled: theme.animate; NumberAnimation { duration: 200; easing.type: Easing.OutCubic } }
                         }
-
-                        // Advanced Archive Formats
-                        Rectangle {
-                            Layout.fillWidth: true
-                            Layout.minimumWidth: 0
-                            implicitHeight: expArchRow.implicitHeight + 32
-                            radius: theme.radiusL
-                            color: theme.surfaceContainer
-                            Behavior on color { enabled: theme.animate; ColorAnimation { duration: theme.durationNormal } }
-
-                            GridLayout {
-                                id: expArchRow
-                                anchors.fill: parent
-                                anchors.margins: 16
-                                columnSpacing: 14
-                                rowSpacing: 10
-                                columns: (width - 14 - expArchSwitch.implicitWidth) >= 170 ? 2 : 1
-
-                                ColumnLayout {
-                                    spacing: 3
-                                    Layout.fillWidth: true
-                                    Text { text: qsTr("Advanced Archive Formats"); color: theme.textMain; font.pixelSize: theme.fs(14); font.bold: true; wrapMode: Text.Wrap; Layout.fillWidth: true; Layout.minimumWidth: 0 }
-                                    Text { text: qsTr("Enable obscure archive formats (.7z, .tar.bz2, .tar.xz, .tar.zst, .cpio) in Compress menu"); color: theme.textMuted; font.pixelSize: theme.fs(11); wrapMode: Text.Wrap; Layout.fillWidth: true; Layout.minimumWidth: 0 }
-                                }
-
-                                LoafSwitch {
-                                    id: expArchSwitch
-                                    Layout.alignment: Qt.AlignRight
-                                    checked: theme.showAdvancedArchives
-                                    onToggled: theme.showAdvancedArchives = checked
-                                }
-                            }
-
-                            Connections {
-                                target: theme
-                                function onShowAdvancedArchivesChanged() {
-                                    if (expArchSwitch.checked !== theme.showAdvancedArchives)
-                                        expArchSwitch.checked = theme.showAdvancedArchives
-                                }
-                            }
-                        }
-
-                        // PC Customization
-                        Rectangle {
-                            visible: settingsView.searchQuery.length === 0 || settingsView.card12Match
-                            Layout.fillWidth: true
-                            Layout.minimumWidth: 0
-                            implicitHeight: pcCustomRow.implicitHeight + 32
-                            radius: theme.radiusL
-                            color: theme.surfaceContainer
-                            Behavior on color { enabled: theme.animate; ColorAnimation { duration: theme.durationNormal } }
-
-                            GridLayout {
-                                id: pcCustomRow
-                                anchors.fill: parent
-                                anchors.margins: 16
-                                columnSpacing: 14
-                                rowSpacing: 10
-                                columns: (width - 14 - pcCustomSwitch.implicitWidth) >= 170 ? 2 : 1
-
-                                ColumnLayout {
-                                    spacing: 3
-                                    Layout.fillWidth: true
-                                    Text { text: qsTr("PC customization"); color: theme.textMain; font.pixelSize: theme.fs(14); font.bold: true; wrapMode: Text.Wrap; Layout.fillWidth: true; Layout.minimumWidth: 0 }
-                                    Text { text: qsTr("Allow reordering and hiding sections on the This PC dashboard"); color: theme.textMuted; font.pixelSize: theme.fs(11); wrapMode: Text.Wrap; Layout.fillWidth: true; Layout.minimumWidth: 0 }
-                                }
-
-                                LoafSwitch {
-                                    id: pcCustomSwitch
-                                    Layout.alignment: Qt.AlignRight
-                                    checked: theme.experimentalPcCustomization
-                                    onToggled: theme.experimentalPcCustomization = checked
-                                }
-                            }
-
-                            // LoafSwitch assigns to its own `checked` when clicked,
-                            // which drops the binding above. Re-sync so the switch
-                            // still follows external changes (e.g. settings loaded
-                            // from the store, or another view toggling the option).
-                            Connections {
-                                target: theme
-                                function onExperimentalPcCustomizationChanged() {
-                                    if (pcCustomSwitch.checked !== theme.experimentalPcCustomization)
-                                        pcCustomSwitch.checked = theme.experimentalPcCustomization
-                                }
-                            }
-                        }
+                        Behavior on opacity { enabled: theme.animate; NumberAnimation { duration: 180; easing.type: Easing.OutCubic } }
                     }
 
-                    // ==========================================
-                    // TAB 3: ABOUT LOAF
-                    // ==========================================
-                    ColumnLayout {
+                    // Tab 7: Shortcuts
+                    ShortcutsTab {
+                        id: tabShortcuts
+                        searchQuery: settingsView.searchQuery
+                        visible: settingsView.searchQuery.length > 0
+                            ? (tabShortcuts.matchCount > 0)
+                            : (settingsView.activeTab === 7)
+                        opacity: (settingsView.searchQuery.length > 0 || settingsView.activeTab === 7) ? 1.0 : 0.0
+                        transform: Translate {
+                            y: (settingsView.searchQuery.length > 0 || settingsView.activeTab === 7) ? 0 : 8
+                            Behavior on y { enabled: theme.animate; NumberAnimation { duration: 200; easing.type: Easing.OutCubic } }
+                        }
+                        Behavior on opacity { enabled: theme.animate; NumberAnimation { duration: 180; easing.type: Easing.OutCubic } }
+                    }
+
+                    // Tab 4: About
+                    AboutTab {
                         id: tabAbout
-                        Layout.fillWidth: true
-                        spacing: 14
-
-                        readonly property bool shown: settingsView.searchQuery.length > 0 ? (settingsView.aboutMatches > 0) : (settingsView.activeTab === 4)
-                        readonly property real fadeOverlap: settingsView.fadeOverlapAbove(tabAbout)
-                        property real slideOffset: shown ? 0 : 6
-
-                        Layout.topMargin: -fadeOverlap
-                        Layout.bottomMargin: fadeOverlap
-
-                        visible: shown || opacity > 0.001
-                        opacity: shown ? 1.0 : 0.0
-                        enabled: shown
-
-                        Behavior on opacity { enabled: theme.animate; NumberAnimation { duration: 200; easing.type: Easing.OutCubic } }
-                        Behavior on slideOffset { enabled: theme.animate; NumberAnimation { duration: 200; easing.type: Easing.OutCubic } }
-                        transform: Translate { y: tabAbout.slideOffset }
-
-                        Rectangle {
-                            Layout.fillWidth: true
-                            Layout.minimumWidth: 0
-                            implicitHeight: aboutRow.implicitHeight + 36
-                            radius: theme.radiusL
-                            color: theme.surfaceContainer
-                            Behavior on color { enabled: theme.animate; ColorAnimation { duration: theme.durationNormal } }
-
-                            RowLayout {
-                                id: aboutRow
-                                anchors.fill: parent
-                                anchors.margins: 18
-                                spacing: 16
-
-                                Rectangle {
-                                    width: 52; height: 52; radius: theme.radiusM
-                                    color: theme.primaryContainer
-                                    Image { anchors.centerIn: parent; source: "qrc:/loaf/oxygen-files.svg"; width: 30; height: 30; sourceSize.width: 60; sourceSize.height: 60 }
-                                }
-
-                                ColumnLayout {
-                                    spacing: 4
-                                    Text { text: qsTr("Oxygen Files v") + Qt.application.version; color: theme.textMain; font.pixelSize: theme.fs(16); font.bold: true }
-                                    Text { text: qsTr("The Oxygen Theme file manager: a fork of Loaf, the Rust-based Material 3 Expressive file manager for Linux."); color: theme.textMuted; font.pixelSize: theme.fs(12) }
-                                    RowLayout {
-                                        spacing: 6
-                                        LoafIcon { name: "github-logo"; size: 14; color: theme.primary }
-                                        Text {
-                                            id: ghLink
-                                            text: qsTr("github.com/m-uvex/loaf-fm  ·  by @m_uvex")
-                                            color: ghMouse.containsMouse ? theme.primary : theme.outline
-                                            font.pixelSize: theme.fs(11)
-                                            font.underline: ghMouse.containsMouse
-
-                                            Behavior on color { enabled: theme.animate; ColorAnimation { duration: 120 } }
-
-                                            MouseArea {
-                                                id: ghMouse
-                                                anchors.fill: parent
-                                                hoverEnabled: true
-                                                cursorShape: Qt.PointingHandCursor
-                                                onClicked: Qt.openUrlExternally("https://github.com/m-uvex/loaf-fm")
-                                            }
-                                        }
-                                    }
-                                }
-                            }
+                        searchQuery: settingsView.searchQuery
+                        visible: settingsView.searchQuery.length > 0
+                            ? (tabAbout.matchCount > 0)
+                            : (settingsView.activeTab === 4)
+                        opacity: (settingsView.searchQuery.length > 0 || settingsView.activeTab === 4) ? 1.0 : 0.0
+                        transform: Translate {
+                            y: (settingsView.searchQuery.length > 0 || settingsView.activeTab === 4) ? 0 : 8
+                            Behavior on y { enabled: theme.animate; NumberAnimation { duration: 200; easing.type: Easing.OutCubic } }
                         }
+                        Behavior on opacity { enabled: theme.animate; NumberAnimation { duration: 180; easing.type: Easing.OutCubic } }
                     }
                 }
-            }
-        }
-    }
-
-    // Settings row: title + subtitle on the left, a control on the right.
-    component SettingCard: Rectangle {
-        id: card
-        property string title: ""
-        property string subtitle: ""
-        default property alias control: controlSlot.data
-        Layout.fillWidth: true
-        Layout.minimumWidth: 0
-        implicitHeight: cardRow.implicitHeight + 32
-        radius: theme.radiusL
-        color: theme.surfaceContainer
-
-        GridLayout {
-            id: cardRow
-            anchors.fill: parent
-            anchors.margins: 16
-            columnSpacing: 14
-            rowSpacing: 10
-            // Two columns while the label still has room; otherwise the control
-            // moves below the text so it never gets pushed out of the card.
-            columns: (width - 14 - controlSlot.implicitWidth) >= 170 ? 2 : 1
-
-            ColumnLayout {
-                Layout.fillWidth: true
-                Layout.minimumWidth: 0
-                spacing: 3
-                Text {
-                    text: card.title
-                    color: theme.textMain
-                    font.pixelSize: theme.fs(14)
-                    font.bold: true
-                    wrapMode: Text.Wrap
-                    Layout.fillWidth: true
-                }
-                Text {
-                    text: card.subtitle
-                    color: theme.textMuted
-                    font.pixelSize: theme.fs(11)
-                    wrapMode: Text.Wrap
-                    Layout.fillWidth: true
-                }
-            }
-            RowLayout {
-                id: controlSlot
-                Layout.alignment: cardRow.columns === 1 ? Qt.AlignRight : Qt.AlignVCenter
             }
         }
     }

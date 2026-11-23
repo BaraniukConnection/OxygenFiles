@@ -1,0 +1,654 @@
+use crate::archive;
+use crate::message::{Message, MessageKey};
+use crate::util;
+use std::collections::HashMap;
+use std::fs::File;
+use std::io::{BufRead, BufReader, Read, Write};
+use std::net::{TcpListener, TcpStream};
+use std::os::unix::fs::PermissionsExt;
+use std::path::PathBuf;
+use std::process::{Child, Command, Stdio};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::{Arc, Mutex, OnceLock};
+use std::thread;
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+pub struct ShareItem {
+    pub id: String,
+    pub name: String,
+    pub original_path: String,
+    pub file_path: String,
+    pub is_archive: bool,
+    pub size_bytes: u64,
+    pub created_at: u64,
+    pub expires_at: u64, // 0 if no expiration
+    pub port: u16,
+    pub url: String,
+    pub status: String, // "starting", "ready", "error", "expired"
+    pub error_message: Option<String>,
+    pub bytes_sent: u64,
+    pub download_count: u32,
+    #[serde(skip)]
+    pub temp_file_to_delete: Option<PathBuf>,
+}
+
+pub struct ShareManager {
+    shares: Mutex<HashMap<String, ShareItem>>,
+    handles: Mutex<HashMap<String, ActiveShareHandle>>,
+    cloudflared_installing: AtomicBool,
+}
+
+struct ActiveShareHandle {
+    stop_flag: Arc<AtomicBool>,
+    bytes_sent: Arc<AtomicU64>,
+    child_process: Option<Child>,
+    temp_file: Option<PathBuf>,
+}
+
+static MANAGER: OnceLock<ShareManager> = OnceLock::new();
+
+pub fn get_manager() -> &'static ShareManager {
+    MANAGER.get_or_init(|| ShareManager {
+        shares: Mutex::new(HashMap::new()),
+        handles: Mutex::new(HashMap::new()),
+        cloudflared_installing: AtomicBool::new(false),
+    })
+}
+
+/// Find cloudflared binary, checking system PATH, then ~/.local/share/loaf/bin/cloudflared
+pub fn find_cloudflared() -> Option<PathBuf> {
+    if let Some(p) = util::which("cloudflared") {
+        return Some(p);
+    }
+    let local = util::data_home().join("loaf/bin/cloudflared");
+    if local.is_file() {
+        return Some(local);
+    }
+    None
+}
+
+pub fn is_cloudflared_installed() -> bool {
+    find_cloudflared().is_some()
+}
+
+/// Downloads and installs cloudflared asynchronously if not already installed.
+pub fn ensure_cloudflared_installed(on_complete: Box<dyn FnOnce(bool, String) + Send + 'static>) {
+    if is_cloudflared_installed() {
+        on_complete(true, String::new());
+        return;
+    }
+
+    let mgr = get_manager();
+    if mgr.cloudflared_installing.swap(true, Ordering::SeqCst) {
+        on_complete(
+            false,
+            Message::key(MessageKey::ShareErrorInstallInProgress).to_string(),
+        );
+        return;
+    }
+
+    thread::spawn(move || {
+        let res = install_cloudflared_sync();
+        get_manager()
+            .cloudflared_installing
+            .store(false, Ordering::SeqCst);
+        match res {
+            Ok(path) => on_complete(true, path.to_string_lossy().to_string()),
+            Err(e) => on_complete(false, e),
+        }
+    });
+}
+
+fn install_cloudflared_sync() -> Result<PathBuf, String> {
+    let dest_dir = util::data_home().join("loaf/bin");
+    std::fs::create_dir_all(&dest_dir).map_err(|e| {
+        Message::key(MessageKey::ShareErrorCreateBinDir)
+            .text(e.to_string())
+            .to_string()
+    })?;
+    let dest_bin = dest_dir.join("cloudflared");
+    let tmp_bin = dest_dir.join("cloudflared.tmp");
+
+    let arch = match std::env::consts::ARCH {
+        "x86_64" => "amd64",
+        "aarch64" => "arm64",
+        "arm" => "arm",
+        other => {
+            return Err(Message::key(MessageKey::ShareErrorUnsupportedArch)
+                .text(other.to_string())
+                .to_string())
+        }
+    };
+
+    let url = format!(
+        "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-{}",
+        arch
+    );
+
+    // Try using curl, python3, or wget
+    let downloaded = if let Some(curl) = util::which("curl") {
+        let status = Command::new(curl)
+            .args(["-fsSL", "-o", tmp_bin.to_str().unwrap(), &url])
+            .status();
+        matches!(status, Ok(s) if s.success())
+    } else if let Some(wget) = util::which("wget") {
+        let status = Command::new(wget)
+            .args(["-q", "-O", tmp_bin.to_str().unwrap(), &url])
+            .status();
+        matches!(status, Ok(s) if s.success())
+    } else if let Some(py) = util::which("python3") {
+        let py_script = format!(
+            "import urllib.request\nreq = urllib.request.Request('{}', headers={{'User-Agent': 'loaf/0.2'}})\nwith urllib.request.urlopen(req) as r, open('{}', 'wb') as f:\n    f.write(r.read())",
+            url, tmp_bin.to_str().unwrap()
+        );
+        let status = Command::new(py).args(["-c", &py_script]).status();
+        matches!(status, Ok(s) if s.success())
+    } else {
+        return Err(Message::key(MessageKey::ShareErrorToolMissing).to_string());
+    };
+
+    if !downloaded || !tmp_bin.exists() {
+        let _ = std::fs::remove_file(&tmp_bin);
+        return Err(Message::key(MessageKey::ShareErrorDownloadFailed).to_string());
+    }
+
+    // Set executable permission (0o755)
+    if let Ok(meta) = std::fs::metadata(&tmp_bin) {
+        let mut perms = meta.permissions();
+        perms.set_mode(0o755);
+        let _ = std::fs::set_permissions(&tmp_bin, perms);
+    }
+
+    std::fs::rename(&tmp_bin, &dest_bin).map_err(|e| {
+        Message::key(MessageKey::ShareErrorMoveBinary)
+            .text(e.to_string())
+            .to_string()
+    })?;
+    Ok(dest_bin)
+}
+
+impl ShareManager {
+    pub fn list_shares_json(&self) -> String {
+        let mut shares: Vec<ShareItem> = {
+            let guard = self.shares.lock().unwrap();
+            guard.values().cloned().collect()
+        };
+
+        // Update real-time stats
+        {
+            let handles = self.handles.lock().unwrap();
+            for s in &mut shares {
+                if let Some(h) = handles.get(&s.id) {
+                    s.bytes_sent = h.bytes_sent.load(Ordering::Relaxed);
+                }
+            }
+        }
+
+        // Sort newest first
+        shares.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+        serde_json::to_string(&shares).unwrap_or_else(|_| "[]".into())
+    }
+
+    pub fn stop_share(&self, share_id: &str) -> bool {
+        let mut h_guard = self.handles.lock().unwrap();
+        if let Some(mut handle) = h_guard.remove(share_id) {
+            handle.stop_flag.store(true, Ordering::SeqCst);
+            if let Some(mut child) = handle.child_process.take() {
+                let _ = child.kill();
+            }
+            if let Some(tmp) = handle.temp_file.take() {
+                let _ = std::fs::remove_file(tmp);
+            }
+        }
+
+        let mut s_guard = self.shares.lock().unwrap();
+        if let Some(s) = s_guard.get_mut(share_id) {
+            s.status = "expired".into();
+            return true;
+        }
+        false
+    }
+
+    pub fn remove_share(&self, share_id: &str) -> bool {
+        self.stop_share(share_id);
+        let mut s_guard = self.shares.lock().unwrap();
+        s_guard.remove(share_id).is_some()
+    }
+}
+
+pub struct CreateShareParams {
+    pub paths: Vec<PathBuf>,
+    pub compress_folders: bool,
+    pub compress_files: bool,
+    pub format: String,
+    pub password: String,
+    pub expiration_hours: u32, // 0 for none
+    pub throttle_kbps: u32,    // 0 for unlimited
+}
+
+/// Spawns the sharing pipeline in background thread.
+/// Calls on_url(Result<(share_id, url), error>) when ready or on error.
+pub fn start_share_pipeline<F>(params: CreateShareParams, on_url: F)
+where
+    F: FnOnce(Result<(String, String), String>) + Send + 'static,
+{
+    thread::spawn(move || {
+        let res = run_share_pipeline(params);
+        match res {
+            Ok((id, url)) => on_url(Ok((id, url))),
+            Err(e) => on_url(Err(e)),
+        }
+    });
+}
+
+fn run_share_pipeline(params: CreateShareParams) -> Result<(String, String), String> {
+    if params.paths.is_empty() {
+        return Err(Message::key(MessageKey::ShareErrorNoFiles).to_string());
+    }
+
+    let cloudflared_bin = find_cloudflared()
+        .ok_or_else(|| Message::key(MessageKey::ShareErrorCloudflaredMissing).to_string())?;
+
+    // Determine target file to serve
+    let single = params.paths.len() == 1;
+    let single_path = &params.paths[0];
+    let is_dir = single_path.is_dir();
+
+    let needs_archive = if !single {
+        true
+    } else if is_dir {
+        params.compress_folders
+    } else {
+        params.compress_files
+    };
+
+    let (file_to_serve, serve_name, temp_file) = if needs_archive {
+        let base = if single {
+            if is_dir {
+                single_path
+                    .file_name()
+                    .unwrap_or_default()
+                    .to_string_lossy()
+                    .to_string()
+            } else {
+                single_path
+                    .file_stem()
+                    .unwrap_or_default()
+                    .to_string_lossy()
+                    .to_string()
+            }
+        } else {
+            "Shared_Files".to_string()
+        };
+
+        let ext = match params.format.as_str() {
+            "7z" => "7z",
+            "tar.gz" => "tar.gz",
+            _ => "zip",
+        };
+
+        let temp_dir = std::env::temp_dir().join(format!("loaf-share-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&temp_dir);
+        let archive_target = temp_dir.join(format!("{}.{}", base, ext));
+
+        // Create the archive
+        archive::compress(
+            &archive_target,
+            &params.paths,
+            &params.format,
+            &params.password,
+            &|| false,
+        )
+        .map_err(|e| {
+            Message::key(MessageKey::ShareErrorCompressionFailed)
+                .text(e.to_string())
+                .to_string()
+        })?;
+
+        let name = format!("{}.{}", base, ext);
+        (archive_target.clone(), name, Some(archive_target))
+    } else {
+        let name = single_path
+            .file_name()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .to_string();
+        (single_path.clone(), name, None)
+    };
+
+    let file_meta = std::fs::metadata(&file_to_serve).map_err(|e| e.to_string())?;
+    let file_size = file_meta.len();
+
+    // Start local TCP listener on random port (127.0.0.1:0)
+    let listener = TcpListener::bind("127.0.0.1:0").map_err(|e| {
+        Message::key(MessageKey::ShareErrorBindPort)
+            .text(e.to_string())
+            .to_string()
+    })?;
+    let local_port = listener.local_addr().map_err(|e| e.to_string())?.port();
+
+    let share_id = format!(
+        "{:x}",
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis()
+    );
+    let token = format!("{:x}", rand_u64());
+
+    let now_sec = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    let expires_at = if params.expiration_hours > 0 {
+        now_sec + (params.expiration_hours as u64) * 3600
+    } else {
+        0
+    };
+
+    let stop_flag = Arc::new(AtomicBool::new(false));
+    let bytes_sent = Arc::new(AtomicU64::new(0));
+
+    // Register initial share item in manager
+    let item = ShareItem {
+        id: share_id.clone(),
+        name: serve_name.clone(),
+        original_path: single_path.to_string_lossy().to_string(),
+        file_path: file_to_serve.to_string_lossy().to_string(),
+        is_archive: needs_archive,
+        size_bytes: file_size,
+        created_at: now_sec,
+        expires_at,
+        port: local_port,
+        url: String::new(),
+        status: "starting".into(),
+        error_message: None,
+        bytes_sent: 0,
+        download_count: 0,
+        temp_file_to_delete: temp_file.clone(),
+    };
+
+    {
+        let mut guard = get_manager().shares.lock().unwrap();
+        guard.insert(share_id.clone(), item);
+    }
+
+    // Spawn HTTP file server thread
+    let srv_file = file_to_serve.clone();
+    let srv_name = serve_name.clone();
+    let srv_stop = stop_flag.clone();
+    let srv_bytes = bytes_sent.clone();
+    let srv_token = token.clone();
+    let srv_throttle = params.throttle_kbps;
+    let srv_share_id = share_id.clone();
+
+    thread::spawn(move || {
+        run_file_server(FileServerParams {
+            listener,
+            file_path: srv_file,
+            filename: srv_name,
+            token: srv_token,
+            throttle_kbps: srv_throttle,
+            stop_flag: srv_stop,
+            bytes_sent: srv_bytes,
+            share_id: srv_share_id,
+        });
+    });
+
+    // Spawn cloudflared tunnel
+    let mut cloudflared_cmd = Command::new(cloudflared_bin);
+    cloudflared_cmd
+        .args([
+            "tunnel",
+            "--url",
+            &format!("http://127.0.0.1:{}", local_port),
+            "--no-autoupdate",
+        ])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+
+    let mut child = cloudflared_cmd.spawn().map_err(|e| {
+        Message::key(MessageKey::ShareErrorSpawnCloudflared)
+            .text(e.to_string())
+            .to_string()
+    })?;
+
+    let stderr = child
+        .stderr
+        .take()
+        .ok_or_else(|| Message::key(MessageKey::ShareErrorCaptureStderr).to_string())?;
+
+    // Read stderr until we find https://*.trycloudflare.com
+    let (url_tx, url_rx) = std::sync::mpsc::channel();
+    let stop_for_reader = stop_flag.clone();
+
+    thread::spawn(move || {
+        let reader = BufReader::new(stderr);
+        let mut found = false;
+        for line in reader.lines().map_while(Result::ok) {
+            if !found {
+                for word in line.split_whitespace() {
+                    if (word.starts_with("https://") && word.contains(".trycloudflare.com"))
+                        || (word.starts_with("http://") && word.contains(".trycloudflare.com"))
+                    {
+                        let mut clean_url = word.trim().to_string();
+                        if clean_url.ends_with('|') || clean_url.ends_with(']') {
+                            clean_url.pop();
+                        }
+                        let _ = url_tx.send(Ok(clean_url));
+                        found = true;
+                        break;
+                    }
+                }
+            }
+            if stop_for_reader.load(Ordering::Relaxed) {
+                break;
+            }
+        }
+        if !found {
+            let _ = url_tx.send(Err(Message::key(MessageKey::ShareErrorNoUrl).to_string()));
+        }
+    });
+
+    let tunnel_base_url = match url_rx.recv_timeout(Duration::from_secs(30)) {
+        Ok(Ok(u)) => u,
+        Ok(Err(e)) => {
+            let _ = child.kill();
+            get_manager().stop_share(&share_id);
+            return Err(e);
+        }
+        Err(_) => {
+            let _ = child.kill();
+            get_manager().stop_share(&share_id);
+            return Err(Message::key(MessageKey::ShareErrorTimeout).to_string());
+        }
+    };
+
+    let direct_url = format!("{}/download/{}", tunnel_base_url, token);
+
+    // Save active handle
+    {
+        let mut h_guard = get_manager().handles.lock().unwrap();
+        h_guard.insert(
+            share_id.clone(),
+            ActiveShareHandle {
+                stop_flag: stop_flag.clone(),
+                bytes_sent: bytes_sent.clone(),
+                child_process: Some(child),
+                temp_file,
+            },
+        );
+    }
+
+    // Update share record with final URL and ready status
+    {
+        let mut s_guard = get_manager().shares.lock().unwrap();
+        if let Some(s) = s_guard.get_mut(&share_id) {
+            s.url = direct_url.clone();
+            s.status = "ready".into();
+        }
+    }
+
+    // If expiration configured, spawn background timer to auto-close
+    if params.expiration_hours > 0 {
+        let exp_id = share_id.clone();
+        let exp_hours = params.expiration_hours;
+        thread::spawn(move || {
+            thread::sleep(Duration::from_secs((exp_hours as u64) * 3600));
+            get_manager().stop_share(&exp_id);
+        });
+    }
+
+    Ok((share_id, direct_url))
+}
+
+fn rand_u64() -> u64 {
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default();
+    let pid = std::process::id() as u64;
+    now.as_nanos() as u64 ^ (pid << 32)
+}
+
+struct FileServerParams {
+    listener: TcpListener,
+    file_path: PathBuf,
+    filename: String,
+    token: String,
+    throttle_kbps: u32,
+    stop_flag: Arc<AtomicBool>,
+    bytes_sent: Arc<AtomicU64>,
+    share_id: String,
+}
+
+fn run_file_server(params: FileServerParams) {
+    let FileServerParams {
+        listener,
+        file_path,
+        filename,
+        token,
+        throttle_kbps,
+        stop_flag,
+        bytes_sent,
+        share_id,
+    } = params;
+    listener
+        .set_nonblocking(true)
+        .expect("Cannot set non-blocking");
+
+    while !stop_flag.load(Ordering::Relaxed) {
+        match listener.accept() {
+            Ok((stream, _)) => {
+                let file = file_path.clone();
+                let fname = filename.clone();
+                let tok = token.clone();
+                let b_sent = bytes_sent.clone();
+                let s_id = share_id.clone();
+
+                thread::spawn(move || {
+                    handle_http_client(stream, file, fname, tok, throttle_kbps, b_sent, s_id);
+                });
+            }
+            Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                thread::sleep(Duration::from_millis(50));
+            }
+            Err(_) => break,
+        }
+    }
+}
+
+fn handle_http_client(
+    mut stream: TcpStream,
+    file_path: PathBuf,
+    filename: String,
+    token: String,
+    throttle_kbps: u32,
+    bytes_sent: Arc<AtomicU64>,
+    share_id: String,
+) {
+    let _ = stream.set_read_timeout(Some(Duration::from_secs(10)));
+    let mut reader = BufReader::new(&stream);
+    let mut request_line = String::new();
+    if reader.read_line(&mut request_line).is_err() || request_line.is_empty() {
+        return;
+    }
+
+    let parts: Vec<&str> = request_line.split_whitespace().collect();
+    if parts.len() < 2 || parts[0] != "GET" && parts[0] != "HEAD" {
+        let resp = "HTTP/1.1 405 Method Not Allowed\r\nContent-Length: 0\r\n\r\n";
+        let _ = stream.write_all(resp.as_bytes());
+        return;
+    }
+
+    let is_head = parts[0] == "HEAD";
+    let path = parts[1];
+    let expected_path = format!("/download/{}", token);
+
+    if path != expected_path && path != format!("{}/", expected_path) {
+        let resp = "HTTP/1.1 404 Not Found\r\nContent-Type: text/plain\r\nContent-Length: 9\r\n\r\nNot Found";
+        let _ = stream.write_all(resp.as_bytes());
+        return;
+    }
+
+    let Ok(mut file) = File::open(&file_path) else {
+        let resp = "HTTP/1.1 500 Internal Error\r\nContent-Length: 0\r\n\r\n";
+        let _ = stream.write_all(resp.as_bytes());
+        return;
+    };
+
+    let total_size = file.metadata().map(|m| m.len()).unwrap_or(0);
+
+    // Escape quotation marks in filename for Content-Disposition
+    let safe_name = filename.replace('"', "\\\"");
+
+    let headers = format!(
+        "HTTP/1.1 200 OK\r\n\
+        Content-Type: application/octet-stream\r\n\
+        Content-Length: {}\r\n\
+        Content-Disposition: attachment; filename=\"{}\"\r\n\
+        Connection: close\r\n\r\n",
+        total_size, safe_name
+    );
+
+    if stream.write_all(headers.as_bytes()).is_err() || is_head {
+        return;
+    }
+
+    // Increment download count
+    {
+        let mut s_guard = get_manager().shares.lock().unwrap();
+        if let Some(s) = s_guard.get_mut(&share_id) {
+            s.download_count += 1;
+        }
+    }
+
+    // Stream file data
+    let chunk_size = 64 * 1024; // 64 KB
+    let mut buf = vec![0u8; chunk_size];
+
+    loop {
+        let start = Instant::now();
+        match file.read(&mut buf) {
+            Ok(0) => break, // EOF
+            Ok(n) => {
+                if stream.write_all(&buf[..n]).is_err() {
+                    break;
+                }
+                bytes_sent.fetch_add(n as u64, Ordering::Relaxed);
+
+                // Throttling
+                if throttle_kbps > 0 {
+                    let target_duration = Duration::from_micros(
+                        ((n as u64) * 8 * 1_000_000) / ((throttle_kbps as u64) * 1000 * 8),
+                    );
+                    let elapsed = start.elapsed();
+                    if target_duration > elapsed {
+                        thread::sleep(target_duration - elapsed);
+                    }
+                }
+            }
+            Err(_) => break,
+        }
+    }
+}

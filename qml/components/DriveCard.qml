@@ -10,8 +10,8 @@ Item {
     id: root
 
     Layout.fillWidth: true
-    Layout.preferredHeight: 76
-    implicitHeight: 76
+    Layout.preferredHeight: 128
+    implicitHeight: 128
     implicitWidth: 320
 
     property var drive: ({})
@@ -66,6 +66,10 @@ Item {
         return "hard-drive";
     }
 
+    readonly property real usage: Math.max(0, Math.min(1, ((root.drive && root.drive.percent) || 0) / 100))
+    // Nearly full drives switch to the error colors.
+    readonly property bool almostFull: root.isMounted && root.usage >= 0.9
+
     function secondaryText() {
         var d = root.drive || {};
         var label = d.label ? String(d.label) : "";
@@ -79,16 +83,17 @@ Item {
         return d.device ? String(d.device) : "";
     }
 
-    opacity: root.isMounted ? 1.0 : 0.8
+    opacity: root.isMounted || (root.drive && root.drive.provider === "mtp") ? 1.0 : 0.85
     Behavior on opacity { enabled: theme.animate; NumberAnimation { duration: 140 } }
 
-    // ---- surfaces -----------------------------------------------------------
+    scale: cardMouse.pressed ? 0.98 : 1.0
+    Behavior on scale { enabled: theme.animate; SpringAnimation { spring: 3.5; damping: 0.32 } }
 
     Rectangle {
         id: card
         anchors.fill: parent
-        radius: theme.radiusL
-        color: theme.surfaceContainerLow
+        radius: theme.radiusXl
+        color: root.isMounted ? theme.surfaceContainer : theme.surfaceContainerLow
 
         Behavior on color { enabled: theme.animate; ColorAnimation { duration: theme.durationFast } }
     }
@@ -96,7 +101,7 @@ Item {
     Rectangle {
         id: hoverLayer
         anchors.fill: parent
-        radius: theme.radiusL
+        radius: theme.radiusXl
         color: cardMouse.containsMouse ? theme.hoverOverlay : "transparent"
 
         Behavior on color { enabled: theme.animate; ColorAnimation { duration: 100 } }
@@ -106,127 +111,129 @@ Item {
     Shape {
         id: dashedBorder
         anchors.fill: parent
-        visible: !root.isMounted
+        visible: !root.isMounted && !(root.drive && root.drive.provider === "mtp")
+        readonly property real r: theme.radiusXl
 
         ShapePath {
-            strokeColor: theme.outlineVariant
+            strokeColor: theme.outlineAlpha(theme.outlineVariant)
             strokeWidth: 1
             fillColor: "transparent"
             strokeStyle: ShapePath.DashLine
             dashPattern: [4, 4]
             capStyle: ShapePath.FlatCap
 
-            startX: 12
+            startX: dashedBorder.r
             startY: 0
-            PathLine { x: dashedBorder.width - 12; y: 0 }
-            PathArc { x: dashedBorder.width; y: 12; radiusX: 12; radiusY: 12 }
-            PathLine { x: dashedBorder.width; y: dashedBorder.height - 12 }
-            PathArc { x: dashedBorder.width - 12; y: dashedBorder.height; radiusX: 12; radiusY: 12 }
-            PathLine { x: 12; y: dashedBorder.height }
-            PathArc { x: 0; y: dashedBorder.height - 12; radiusX: 12; radiusY: 12 }
-            PathLine { x: 0; y: 12 }
-            PathArc { x: 12; y: 0; radiusX: 12; radiusY: 12 }
+            PathLine { x: dashedBorder.width - dashedBorder.r; y: 0 }
+            PathArc { x: dashedBorder.width; y: dashedBorder.r; radiusX: dashedBorder.r; radiusY: dashedBorder.r }
+            PathLine { x: dashedBorder.width; y: dashedBorder.height - dashedBorder.r }
+            PathArc { x: dashedBorder.width - dashedBorder.r; y: dashedBorder.height; radiusX: dashedBorder.r; radiusY: dashedBorder.r }
+            PathLine { x: dashedBorder.r; y: dashedBorder.height }
+            PathArc { x: 0; y: dashedBorder.height - dashedBorder.r; radiusX: dashedBorder.r; radiusY: dashedBorder.r }
+            PathLine { x: 0; y: dashedBorder.r }
+            PathArc { x: dashedBorder.r; y: 0; radiusX: dashedBorder.r; radiusY: dashedBorder.r }
         }
     }
 
-    // ---- mounted content ----------------------------------------------------
-
-    RowLayout {
-        visible: root.isMounted
+    ColumnLayout {
         anchors.fill: parent
-        anchors.margins: 14
+        anchors.margins: 16
+        anchors.rightMargin: root.isMounted ? 18 : 16 + mountButton.width + 12
         spacing: 12
 
-        LoafIcon {
-            name: root.driveIcon()
-            size: 28
-            color: theme.primary
-        }
-
-        ColumnLayout {
+        RowLayout {
             Layout.fillWidth: true
-            Layout.preferredWidth: 0
-            spacing: 2
+            spacing: 14
 
-            Text {
-                text: (root.drive && root.drive.name) ? root.drive.name : ""
-                color: theme.textMain
-                font.pixelSize: theme.fs(14)
-                font.bold: true
-                elide: Text.ElideRight
+            Item {
+                Layout.preferredWidth: 52
+                Layout.preferredHeight: 52
+
+                LoafShape {
+                    anchors.fill: parent
+                    shape: root.drive && root.drive.is_external ? "clover4" : "cookie9"
+                    color: !root.isMounted ? theme.surfaceContainerHighest
+                           : (root.almostFull ? theme.dangerContainer : theme.primaryContainer)
+                    rotation: cardMouse.containsMouse ? 30 : 0
+                    Behavior on rotation { enabled: theme.animate; SpringAnimation { spring: 2.5; damping: 0.28 } }
+                    Behavior on color { enabled: theme.animate; ColorAnimation { duration: theme.durationNormal } }
+                }
+
+                LoafIcon {
+                    anchors.centerIn: parent
+                    name: root.drive && root.drive.is_locked ? "lock-simple" : root.driveIcon()
+                    size: 24
+                    color: !root.isMounted ? theme.textMuted
+                           : (root.almostFull ? theme.danger : theme.primaryContainerFg)
+                }
+            }
+
+            ColumnLayout {
                 Layout.fillWidth: true
+                Layout.preferredWidth: 0
+                spacing: 2
+
+                Text {
+                    text: (root.drive && root.drive.name) ? theme.resolveRustMessage(root.drive.name) : ""
+                    color: theme.textMain
+                    font.pixelSize: theme.fs(15)
+                    font.bold: true
+                    elide: Text.ElideRight
+                    Layout.fillWidth: true
+                }
+
+                Text {
+                    text: root.isMounted ? root.secondaryText() : ((root.drive && root.drive.device) ? root.drive.device : "")
+                    color: theme.textMuted
+                    font.pixelSize: theme.fs(12)
+                    elide: Text.ElideRight
+                    Layout.fillWidth: true
+                }
             }
 
             Text {
-                text: root.secondaryText()
-                color: theme.textMuted
-                font.pixelSize: theme.fs(12)
-                elide: Text.ElideRight
-                Layout.fillWidth: true
+                visible: root.isMounted
+                text: Math.round(root.usage * 100) + "%"
+                color: root.almostFull ? theme.danger : theme.primary
+                font.pixelSize: theme.fs(24)
+                font.bold: true
+                font.letterSpacing: -0.5
             }
         }
 
-        ColumnLayout {
-            Layout.preferredWidth: 170
-            Layout.maximumWidth: 210
-            spacing: 5
+        UsageBar {
+            visible: root.isMounted
+            Layout.fillWidth: true
+            value: root.usage
+            barColor: root.almostFull ? theme.danger : theme.primary
+        }
 
-            UsageBar {
-                Layout.fillWidth: true
-                value: (root.drive && root.drive.percent ? root.drive.percent : 0) / 100
-            }
+        RowLayout {
+            visible: root.isMounted
+            Layout.fillWidth: true
+            spacing: 8
 
             Text {
-                text: root.formatBytes(root.usedBytes) + " used of " + root.formatBytes(root.totalBytes)
+                text: qsTr("%1 used").arg(root.formatBytes(root.usedBytes))
                 color: theme.textMuted
                 font.pixelSize: theme.fs(11)
                 elide: Text.ElideRight
-                horizontalAlignment: Text.AlignRight
-                Layout.fillWidth: true
-            }
-        }
-    }
-
-    // ---- unmounted content --------------------------------------------------
-
-    RowLayout {
-        visible: !root.isMounted
-        anchors.fill: parent
-        anchors.margins: 14
-        anchors.rightMargin: 14 + mountButton.width + 12
-        spacing: 12
-
-        LoafIcon {
-            name: root.driveIcon()
-            size: 28
-            color: theme.textMuted
-        }
-
-        ColumnLayout {
-            Layout.fillWidth: true
-            Layout.preferredWidth: 0
-            spacing: 2
-
-            Text {
-                text: (root.drive && root.drive.name) ? root.drive.name : ""
-                color: theme.textMain
-                font.pixelSize: theme.fs(14)
-                font.bold: true
-                elide: Text.ElideRight
                 Layout.fillWidth: true
             }
 
             Text {
-                text: (root.drive && root.drive.device) ? root.drive.device : ""
+                text: qsTr("%1 free of %2").arg(root.formatBytes(Math.max(0, root.totalBytes - root.usedBytes))).arg(root.formatBytes(root.totalBytes))
                 color: theme.textMuted
-                font.pixelSize: theme.fs(12)
-                elide: Text.ElideRight
-                Layout.fillWidth: true
+                font.pixelSize: theme.fs(11)
+                horizontalAlignment: Text.AlignRight
             }
         }
-    }
 
-    // ---- interaction --------------------------------------------------------
+        Item {
+            visible: !root.isMounted
+            Layout.fillHeight: true
+        }
+    }
 
     // Sits above the content so the whole card is clickable; the Mount button
     // below is raised above this MouseArea so it keeps its own clicks.
@@ -250,9 +257,9 @@ Item {
         z: 2
         visible: !root.isMounted
         anchors.right: parent.right
-        anchors.rightMargin: 14
+        anchors.rightMargin: 16
         anchors.verticalCenter: parent.verticalCenter
-        text: qsTr("Mount")
+        text: root.drive && root.drive.provider === "mtp" ? qsTr("Browse") : qsTr("Mount")
         variant: "tonal"
         icon: "download-simple"
         onClicked: root.mountRequested()

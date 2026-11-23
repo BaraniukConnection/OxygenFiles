@@ -13,39 +13,44 @@
   <img src="docs/banner.png" alt="Oxygen Files: the home folder and a folder of wallpapers on frosted glass">
 </p>
 
-**Built with:** Rust + Qt 6 Quick / QML · **Runs on:** Linux, best on Hyprland · **Upstream:** [m-uvex/loaf-fm](https://github.com/m-uvex/loaf-fm) `dev` · **License:** MIT
+**Built with:** Rust + Qt 6 Quick / QML · **Runs on:** Linux, best on Hyprland · **Upstream:** [m-uvex/loaf-fm](https://github.com/m-uvex/loaf-fm) v0.4.0 · **License:** MIT
 
 ---
 
 ## Why Oxygen Files
 
 - **Glass that matches the desktop.** The window and its panels are translucent and Hyprland blurs what is behind them, the same deep emerald glass as Unia Breathe Desktop. Turn blur off and the window goes solid.
-- **Everything Loaf already does well.** Fast folders, tabs and split view, archives, undo for every file operation, thumbnails, search. Oxygen Files keeps all of it and tracks Loaf's `dev` branch.
+- **Everything Loaf already does well.** Fast folders, tabs and split view, archives, undo for every file operation, thumbnails, search. Oxygen Files keeps all of it and follows Loaf's releases.
 - **Your folders, your icons.** Give any folder, sidebar place or disk its own icon from the system theme, Simple Icons, Material Symbols, emoji, your own icon sets, or any image.
 - **Fixes that go back upstream.** Bugs found here are written up for Loaf, so both projects get them.
 
 ## Features
 
 ### From Loaf
-- **Material 3 Expressive** motion and eight colour palettes, plus one generated from your wallpaper
-- **Tabs** (`Ctrl+T`) and **split view** (`F3`), restored on the next start
+- **Material 3 Expressive** motion, a This PC dashboard, adjustable window and panel opacity
+- **Tabs** (`Ctrl+T`) and **split view** (`F3`), restored on the next start; drop files on a tab
+- **Network:** SMB (found on its own), WebDAV, rclone, remote mounts with their disk usage, phones over MTP, KDE Connect
+- **Views:** grouping, per-folder view settings that pass down to subfolders, resizable list columns, smooth scrolling
 - **Archives:** compress and extract `.zip` (also with a password), `.tar.gz`, `.7z`, `.tar.xz`, `.tar.zst`, `.tar.bz2`, `.cpio`
 - **Undo and redo** (`Ctrl+Z` / `Ctrl+Y`) for renames, new files, moves and deletions
 - **Background operations** with a progress pill, cancel and undo; removable drives are flushed before they report done
 - **Thumbnails** for images, videos, PDFs and fonts through the shared freedesktop cache
 - **Search** as you type, or through subfolders and your whole home folder, optionally inside text files
 - **Live folders** that update the moment another program changes them
-- **Desktop integration:** GTK bookmarks, Recent and Starred, Open With, templates, Nautilus scripts, freedesktop trash, Open as Administrator
+- **Desktop integration:** GTK bookmarks, Recent and Starred, Open With, templates, Nautilus scripts, freedesktop trash, Open as Administrator, the portal file chooser
+- **Your keys and fonts:** custom keybindings, a font chooser, font weight and high contrast
 - **Low-power mode** that turns effects off on machines without GPU acceleration
 
 ### Added in Oxygen Files
-- **The Unia palette** as the default: dark from the shell, light from Vision DesignSystem
-- **Frosted glass** with four levels (Off · Low · Medium · Unia) in Settings → Interface → Transparency. Menus and dialogs stay solid
+- **The Unia palette**, the one pinned palette: dark from the shell, light from Vision DesignSystem. Pick any other accent the way Unia Breathe Desktop's Theme page does (a palette of hues or a hex value) and the whole palette follows it; save it as a palette of your own
+- **Frosted glass by default:** Unia's 0.35 for the window and its panels (Settings → Interface → Background / Panel backing opacity). Menus and dialogs stay solid
 - **Follows the compositor's blur:** while blur is off in Hyprland, the window is solid instead of see-through
 - **Disks** on the This PC page: a card per drive with its free and used space; click to open or mount, right-click for the disk menu
 - **Custom icons** for folders, sidebar places and disks (right-click → Change Icon…)
-- **Manrope** as the interface face and the Oxygen Files mark from Vision DesignSystem
-- **Fixes:** disks are read at startup, dragging in Customize Sidebar works, submenus open beside their menu, the View menu opens under its button
+- **Open folders in other programs:** right-click a folder → Open With, for example a project in your editor
+- **Ctrl+Shift selection** in Settings → Behavior: Standard selects the range from the first item to the clicked one; Legacy adds the range to what is already selected and carries on from there
+- **Manrope** as the default interface face and the Oxygen Files mark from Vision DesignSystem
+- **Fix:** dragging in Customize Sidebar works
 
 ## Screenshots
 
@@ -59,7 +64,7 @@ Oxygen Files is built against your system's Qt 6. On Fedora:
 
 ```bash
 sudo dnf install cargo rust cmake ninja-build gcc-c++ pkgconf-pkg-config \
-  qt6-qtbase-devel qt6-qtbase-private-devel qt6-qtdeclarative-devel qt6-qtsvg-devel qt6-qtwayland-devel
+  qt6-qtbase-devel qt6-qtbase-private-devel qt6-qtdeclarative-devel qt6-qtsvg-devel qt6-qtwayland-devel qt6-linguist
 git clone https://github.com/BaraniukConnection/OxygenFiles
 cd OxygenFiles
 ./install.sh        # builds if needed; installs the oxygen-files command and an "Oxygen Files" menu entry
@@ -79,22 +84,21 @@ For the glass, Hyprland needs blur on (`decoration:blur:enabled`, on by default)
 
 ## Upstream
 
-This repository is a GitHub fork of [m-uvex/loaf-fm](https://github.com/m-uvex/loaf-fm), made with the author's agreement. It builds on the `dev` branch, where the author merges all changes; [`UPSTREAM`](UPSTREAM) records the commit it is based on, and Loaf's own README is kept as [`UPSTREAM-README.md`](UPSTREAM-README.md).
+This repository is a GitHub fork of [m-uvex/loaf-fm](https://github.com/m-uvex/loaf-fm), made with the author's agreement. It builds on Loaf's releases; [`UPSTREAM`](UPSTREAM) records the commit it is based on, and Loaf's own README is kept as [`UPSTREAM-README.md`](UPSTREAM-README.md).
 
 The fork leaves out Loaf's release binaries, packaging recipes and CI, and builds from source instead.
 
 ### Fixes worth sending to Loaf
 
-Each was found on `dev` 8877dc1. Before opening a pull request, check that nobody has fixed it there already.
+Still open in Loaf v0.4.0. Before opening a pull request, check that nobody has fixed it there already.
 
-- **Disks are not read at startup.** `drives_json` starts as `"[]"`, and `load_drives()` runs only when the DeviceWatcher (`src/watcher.rs`) sees a device or mount change, or after a disk action. Until then This PC shows no disks at all. The fix is one call to `self.as_mut().load_drives();` in `initialize()` in `src/core.rs`.
 - **Dragging in Customize Sidebar does not work.** The ListView takes the motion for scrolling (no `preventStealing`), and every `move_place` rebuilds the model and destroys the row under the mouse. The fix is a ListModel with a live `move()`, saving the order on release (`qml/main.qml`, `customizePlaces`).
-- **A submenu covers its menu** when there is no room on the right: `LoafPopup.reposition()` shifts it onto the parent menu. The fix flips it to the left of the row (`flipRightEdge`, `openRightOf`).
-- **The View menu drifts sideways:** its position is measured from the arrow's MouseArea instead of `viewDropdownButton` in `qml/main.qml`.
+
+Fixed in Loaf since: disks read at startup (0.2), submenus beside their menu and the View menu under its button (0.3), the inline rename that closed at once when started from the context menu (0.3).
 
 ## License
 
-Loaf is released under the MIT License, as its README states, and Oxygen Files keeps that license for its changes too.
+Loaf is released under the MIT License ([`LICENSE`](LICENSE), third-party notices in [`THIRD-PARTY-LICENSES.md`](THIRD-PARTY-LICENSES.md)), and Oxygen Files keeps that license for its changes too.
 
 | | License |
 |---|---|

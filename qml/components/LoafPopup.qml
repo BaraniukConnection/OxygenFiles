@@ -1,7 +1,6 @@
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
-import QtQuick.Effects
 import app.loaf
 
 // LoafPopup -- Material 3 Expressive surface popup.
@@ -12,7 +11,7 @@ Popup {
 
     property real contentPadding: 10
     property color surfaceColor: theme.menuSurface
-    property color borderColor: theme.borderSubtle
+    property color borderColor: theme.outlineAlpha(theme.borderSubtle)
     property real surfaceRadius: theme.radiusL
 
     // Children land in the host ColumnLayout.
@@ -27,10 +26,11 @@ Popup {
     closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
 
     transformOrigin: Item.Center
-    scale: 0.85
+    scale: 0.8
     opacity: 0.0
 
     enter: Transition {
+        enabled: theme.animate
         ParallelAnimation {
             NumberAnimation { property: "opacity"; from: 0.0; to: 1.0; duration: 220; easing.type: Easing.OutCubic }
             NumberAnimation { property: "scale"; from: 0.8; to: 1.0; duration: 240; easing.type: Easing.OutBack; easing.overshoot: 1.1 }
@@ -38,6 +38,7 @@ Popup {
     }
 
     exit: Transition {
+        enabled: theme.animate
         ParallelAnimation {
             NumberAnimation { property: "opacity"; from: 1.0; to: 0.0; duration: 160; easing.type: Easing.InCubic }
             NumberAnimation { property: "scale"; from: 1.0; to: 0.85; duration: 160; easing.type: Easing.InCubic }
@@ -46,18 +47,13 @@ Popup {
 
     background: Item {
         id: bgItem
-
-        // Subtle soft shadow underneath the popup card
         Rectangle {
             anchors.fill: parent
             anchors.topMargin: 3
             anchors.bottomMargin: -3
             radius: popup.surfaceRadius
-            color: "#000000"
-            opacity: theme.isDark ? 0.35 : 0.12
+            color: theme.shadow
         }
-
-        // Main rounded card
         Rectangle {
             id: surfaceRect
             anchors.fill: parent
@@ -82,8 +78,6 @@ Popup {
     // True while the pointer is over the popup content (used for submenu lifetime).
     property alias contentHovered: contentHoverHandler.hovered
 
-    // ---- positioning helpers ------------------------------------------------
-
     function winWidth() {
         if (typeof window !== "undefined" && window && window.width > 0) return window.width;
         return 1920;
@@ -100,17 +94,11 @@ Popup {
     // so the clamping is applied right after open().
     property real requestedX: 0
     property real requestedY: 0
-    // Where to put the right edge when flipping left; NaN flips at requestedX.
-    // Submenus set it to the left edge of their row, so a flipped submenu sits
-    // beside the parent menu instead of on top of it.
-    property real flipRightEdge: NaN
 
     function openAt(px, py) {
-        popup.flipRightEdge = NaN;
         popup.requestedX = px;
         popup.requestedY = py;
-        popup.x = px;
-        popup.y = py;
+        popup.reposition();
         popup.open();
         popup.reposition();
     }
@@ -118,7 +106,8 @@ Popup {
     function reposition() {
         var margin = 10;
         var w = popup.width > 0 ? popup.width : (popup.implicitWidth > 0 ? popup.implicitWidth : 200);
-        var h = popup.height > 0 ? popup.height : (popup.implicitHeight > 0 ? popup.implicitHeight : 120);
+        var h = (typeof popup.computeHeight === "function") ? popup.computeHeight()
+            : (popup.height > 0 ? popup.height : (popup.implicitHeight > 0 ? popup.implicitHeight : 120));
         var winW = popup.winWidth();
         var winH = popup.winHeight();
 
@@ -126,7 +115,7 @@ Popup {
         var ty = popup.requestedY;
 
         if (tx + w > winW - margin)
-            tx = (isNaN(popup.flipRightEdge) ? popup.requestedX : popup.flipRightEdge) - w;
+            tx = popup.requestedX - w;
         if (ty + h > winH - margin)
             ty = popup.requestedY - h;
 
@@ -138,6 +127,7 @@ Popup {
     }
 
     onOpened: popup.reposition()
+    onHeightChanged: if (popup.opened) popup.reposition()
 
     function openBelow(anchorItem) {
         if (!anchorItem || !anchorItem.mapToItem) return;
@@ -148,9 +138,46 @@ Popup {
     function openRightOf(anchorItem) {
         if (!anchorItem || !anchorItem.mapToItem) return;
         var p = anchorItem.mapToItem(null, anchorItem.width, 0);
-        var left = anchorItem.mapToItem(null, 0, 0);
         popup.openAt(p.x, p.y);
-        popup.flipRightEdge = left.x - 4;
+    }
+
+    // Open directly below the anchor with the right edges aligned, for
+    // dropdowns hanging off right-side toolbar buttons.
+    function openBelowRight(anchorItem) {
+        if (!anchorItem || !anchorItem.mapToItem) return;
+        var p = anchorItem.mapToItem(null, anchorItem.width - popup.width, anchorItem.height + 6);
+        popup.openAt(p.x, p.y);
+    }
+
+    function openAdjacentTo(anchorItem, parentMenu) {
+        if (!anchorItem || !anchorItem.mapToItem) return;
+        var p = anchorItem.mapToItem(null, 0, 0);
+        var winW = popup.winWidth();
+        var winH = popup.winHeight();
+        var margin = 10;
+        var w = popup.width > 0 ? popup.width : (popup.implicitWidth > 0 ? popup.implicitWidth : 200);
+        var h = (typeof popup.computeHeight === "function") ? popup.computeHeight()
+            : (popup.height > 0 ? popup.height : 120);
+
+        var parentX = parentMenu ? parentMenu.x : p.x;
+        var parentW = parentMenu ? parentMenu.width : anchorItem.width;
+
+        var tx = parentX + parentW - 4;
+        if (tx + w > winW - margin) {
+            tx = Math.max(margin, parentX - w + 4);
+        }
+
+        var ty = p.y - popup.contentPadding;
+        if (ty + h > winH - margin) {
+            ty = Math.max(margin, winH - h - margin);
+        }
+        ty = Math.max(margin, ty);
+
+        popup.requestedX = tx;
+        popup.requestedY = ty;
+        popup.x = tx;
+        popup.y = ty;
+        popup.open();
         popup.reposition();
     }
 }

@@ -4,6 +4,7 @@
 //! Everything is read once and cached; a right-click never re-reads the
 //! applications folders.
 
+use crate::message::{Message, MessageKey};
 use crate::util::{self, lock};
 use std::collections::{HashMap, HashSet};
 use std::fs;
@@ -73,11 +74,16 @@ pub fn parse_desktop_file(path: &Path, id: &str) -> Option<DesktopApp> {
         }
         if in_group {
             if let Some((k, v)) = line.split_once('=') {
-                kv.entry(k.trim().to_string()).or_insert_with(|| v.trim().to_string());
+                kv.entry(k.trim().to_string())
+                    .or_insert_with(|| v.trim().to_string());
             }
         }
     }
-    let is_true = |k: &str| kv.get(k).map(|v| v.eq_ignore_ascii_case("true")).unwrap_or(false);
+    let is_true = |k: &str| {
+        kv.get(k)
+            .map(|v| v.eq_ignore_ascii_case("true"))
+            .unwrap_or(false)
+    };
     if !kv.get("Type").map(|t| t == "Application").unwrap_or(false) || is_true("Hidden") {
         return None;
     }
@@ -87,7 +93,11 @@ pub fn parse_desktop_file(path: &Path, id: &str) -> Option<DesktopApp> {
     }
     // TryExec names a binary that must exist for the entry to be usable.
     if let Some(try_exec) = kv.get("TryExec").filter(|t| !t.is_empty()) {
-        let ok = if try_exec.starts_with('/') { Path::new(try_exec).exists() } else { util::which(try_exec).is_some() };
+        let ok = if try_exec.starts_with('/') {
+            Path::new(try_exec).exists()
+        } else {
+            util::which(try_exec).is_some()
+        };
         if !ok {
             return None;
         }
@@ -112,7 +122,12 @@ pub fn parse_desktop_file(path: &Path, id: &str) -> Option<DesktopApp> {
         icon: kv.get("Icon").cloned().unwrap_or_default(),
         mimes: kv
             .get("MimeType")
-            .map(|m| m.split(';').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect())
+            .map(|m| {
+                m.split(';')
+                    .map(|s| s.trim().to_string())
+                    .filter(|s| !s.is_empty())
+                    .collect()
+            })
             .unwrap_or_default(),
         terminal: is_true("Terminal"),
         no_display: is_true("NoDisplay"),
@@ -130,7 +145,9 @@ fn scan_dir(dir: &Path, prefix: &str, seen: &mut HashSet<String>, out: &mut Vec<
             scan_dir(&p, &format!("{}{}-", prefix, fname), seen, out);
             continue;
         }
-        let Some(stem) = fname.strip_suffix(".desktop") else { continue };
+        let Some(stem) = fname.strip_suffix(".desktop") else {
+            continue;
+        };
         let id = format!("{}{}", prefix, stem);
         // The first folder in priority order owns an id, even if that entry
         // is hidden (that is how users hide system entries).
@@ -191,7 +208,9 @@ pub fn mime_covers(declared: &str, mime: &str) -> bool {
         ("text/markdown", "text/x-markdown"),
         ("application/x-pdf", "application/pdf"),
     ];
-    ALIASES.iter().any(|(a, b)| (declared == *a && mime == *b) || (declared == *b && mime == *a))
+    ALIASES
+        .iter()
+        .any(|(a, b)| (declared == *a && mime == *b) || (declared == *b && mime == *a))
 }
 
 /// `mimeapps.list` files in priority order (spec: desktop-specific first).
@@ -211,7 +230,11 @@ fn mimeapps_files() -> Vec<PathBuf> {
             .map(PathBuf::from),
     );
     dirs.push(util::data_home().join("applications"));
-    dirs.extend(util::data_dirs().into_iter().map(|d| d.join("applications")));
+    dirs.extend(
+        util::data_dirs()
+            .into_iter()
+            .map(|d| d.join("applications")),
+    );
     let mut out = Vec::new();
     for d in dirs {
         for de in &desktops {
@@ -236,7 +259,11 @@ fn group_values(content: &str, group: &str, mime: &str) -> Vec<String> {
         }
         if let Some((k, v)) = line.split_once('=') {
             if k.trim().eq_ignore_ascii_case(mime) {
-                out.extend(v.split(';').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()));
+                out.extend(
+                    v.split(';')
+                        .map(|s| s.trim().to_string())
+                        .filter(|s| !s.is_empty()),
+                );
             }
         }
     }
@@ -259,7 +286,10 @@ pub fn default_for_in(apps: &[DesktopApp], mime: &str) -> Option<DesktopApp> {
         apps.iter().find(|a| a.id == id).cloned()
     };
     let mut removed: HashSet<String> = HashSet::new();
-    let files: Vec<String> = mimeapps_files().iter().filter_map(|p| fs::read_to_string(p).ok()).collect();
+    let files: Vec<String> = mimeapps_files()
+        .iter()
+        .filter_map(|p| fs::read_to_string(p).ok())
+        .collect();
     for content in &files {
         for r in group_values(content, "[Removed Associations]", mime) {
             removed.insert(r.trim_end_matches(".desktop").to_string());
@@ -288,8 +318,11 @@ pub fn default_for_in(apps: &[DesktopApp], mime: &str) -> Option<DesktopApp> {
 /// Apps that declare support for `mime`, default first.
 pub fn for_mime(mime: &str) -> Vec<DesktopApp> {
     let apps = all();
-    let mut list: Vec<DesktopApp> =
-        apps.iter().filter(|a| a.mimes.iter().any(|m| mime_covers(m, mime))).cloned().collect();
+    let mut list: Vec<DesktopApp> = apps
+        .iter()
+        .filter(|a| a.mimes.iter().any(|m| mime_covers(m, mime)))
+        .cloned()
+        .collect();
     if let Some(def) = default_for_in(&apps, mime) {
         if let Some(pos) = list.iter().position(|a| a.id == def.id) {
             let d = list.remove(pos);
@@ -302,7 +335,11 @@ pub fn for_mime(mime: &str) -> Vec<DesktopApp> {
 /// Writes `id` as the default for `mime` in `~/.config/mimeapps.list`,
 /// keeping everything else in the file intact.
 pub fn set_default(mime: &str, id: &str) -> std::io::Result<()> {
-    let desktop = if id.ends_with(".desktop") { id.to_string() } else { format!("{}.desktop", id) };
+    let desktop = if id.ends_with(".desktop") {
+        id.to_string()
+    } else {
+        format!("{}.desktop", id)
+    };
     let path = util::config_home().join("mimeapps.list");
     let existing = fs::read_to_string(&path).unwrap_or_default();
     let updated = set_default_in(&existing, mime, &desktop);
@@ -426,13 +463,13 @@ pub fn expand_exec(app: &DesktopApp, files: &[PathBuf]) -> Vec<String> {
     out
 }
 
-/// Shell-like tokenizer for Exec lines (quotes and backslash escapes).
-pub fn tokenize(s: &str) -> Vec<String> {
+fn tokenize_core(s: &str) -> (Vec<String>, bool) {
     let mut tokens = Vec::new();
     let mut cur = String::new();
     let mut quote: Option<char> = None;
     let mut escaped = false;
     let mut has_token = false;
+    let mut is_valid = true;
     for ch in s.chars() {
         if escaped {
             cur.push(ch);
@@ -455,67 +492,311 @@ pub fn tokenize(s: &str) -> Vec<String> {
             c => cur.push(c),
         }
     }
+    if escaped || quote.is_some() {
+        is_valid = false;
+    }
     if has_token || !cur.is_empty() {
         tokens.push(cur);
     }
-    tokens
+    (tokens, is_valid)
 }
 
-/// A terminal emulator command prefix ("kitty", "-e") for Terminal=true apps
-/// and "Open in Terminal".
-pub fn terminal_command() -> Option<(PathBuf, Vec<&'static str>)> {
-    if let Some(t) = util::which("xdg-terminal-exec") {
-        return Some((t, vec![]));
+/// Shell-like tokenizer for Exec lines (quotes and backslash escapes).
+pub fn tokenize(s: &str) -> Vec<String> {
+    tokenize_core(s).0
+}
+
+fn tokenize_strict(s: &str) -> Option<Vec<String>> {
+    let (tokens, valid) = tokenize_core(s);
+    if valid && !tokens.is_empty() {
+        Some(tokens)
+    } else {
+        None
     }
-    for (bin, args) in [
-        ("kgx", vec!["--"]),
-        ("gnome-terminal", vec!["--"]),
-        ("konsole", vec!["-e"]),
-        ("kitty", vec![]),
-        ("alacritty", vec!["-e"]),
-        ("foot", vec![]),
-        ("wezterm", vec!["start", "--"]),
-        ("ghostty", vec!["-e"]),
-        ("xfce4-terminal", vec!["-x"]),
-        ("tilix", vec!["-e"]),
-        ("xterm", vec!["-e"]),
-    ] {
-        if let Some(p) = util::which(bin) {
-            return Some((p, args));
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum WorkdirStrategy {
+    FlagSep(&'static str),
+    FlagJoin(&'static str),
+    WeztermStart,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct ResolvedTerminal {
+    bin: PathBuf,
+    args: Vec<String>,
+    exec_flag: Vec<String>,
+    workdir_strategy: Option<WorkdirStrategy>,
+}
+
+impl ResolvedTerminal {
+    fn for_command(&self) -> (PathBuf, Vec<String>) {
+        let mut full_args = self.args.clone();
+        for flag in &self.exec_flag {
+            if flag == "start" && full_args.iter().any(|a| a == "start") {
+                continue;
+            }
+            full_args.push(flag.clone());
+        }
+        (self.bin.clone(), full_args)
+    }
+
+    fn for_open_in(&self, dir: &Path) -> (PathBuf, Vec<String>) {
+        let mut full_args = self.args.clone();
+        let dir_str = dir.to_string_lossy().to_string();
+        match &self.workdir_strategy {
+            Some(WorkdirStrategy::FlagSep(flag)) => {
+                full_args.push((*flag).to_string());
+                full_args.push(dir_str);
+            }
+            Some(WorkdirStrategy::FlagJoin(flag)) => {
+                full_args.push(format!("{}{}", flag, dir_str));
+            }
+            Some(WorkdirStrategy::WeztermStart) => {
+                let has_start = full_args.iter().any(|a| a == "start");
+                if !has_start {
+                    full_args.push("start".to_string());
+                }
+                full_args.push("--cwd".to_string());
+                full_args.push(dir_str);
+            }
+            None => {}
+        }
+        (self.bin.clone(), full_args)
+    }
+}
+
+fn builtin_terminal_specs() -> &'static [(
+    &'static str,
+    &'static [&'static str],
+    Option<WorkdirStrategy>,
+)] {
+    &[
+        (
+            "xdg-terminal-exec",
+            &[],
+            Some(WorkdirStrategy::FlagJoin("--dir=")),
+        ),
+        (
+            "kgx",
+            &["--"],
+            Some(WorkdirStrategy::FlagJoin("--working-directory=")),
+        ),
+        (
+            "gnome-terminal",
+            &["--"],
+            Some(WorkdirStrategy::FlagJoin("--working-directory=")),
+        ),
+        (
+            "konsole",
+            &["-e"],
+            Some(WorkdirStrategy::FlagSep("--workdir")),
+        ),
+        ("kitty", &[], Some(WorkdirStrategy::FlagSep("-d"))),
+        (
+            "alacritty",
+            &["-e"],
+            Some(WorkdirStrategy::FlagSep("--working-directory")),
+        ),
+        ("foot", &[], Some(WorkdirStrategy::FlagSep("-D"))),
+        (
+            "wezterm",
+            &["start", "--"],
+            Some(WorkdirStrategy::WeztermStart),
+        ),
+        (
+            "ghostty",
+            &["-e"],
+            Some(WorkdirStrategy::FlagJoin("--working-directory=")),
+        ),
+        (
+            "xfce4-terminal",
+            &["-x"],
+            Some(WorkdirStrategy::FlagJoin("--working-directory=")),
+        ),
+        ("tilix", &["-e"], Some(WorkdirStrategy::FlagSep("-w"))),
+        ("xterm", &["-e"], None),
+    ]
+}
+
+fn parse_terminal_candidate(
+    cmd_str: &str,
+    which_fn: impl Fn(&str) -> Option<PathBuf>,
+) -> Option<ResolvedTerminal> {
+    let tokens = tokenize_strict(cmd_str)?;
+    let p = which_fn(&tokens[0])?;
+    let base_name = p.file_name()?.to_string_lossy();
+    let spec = builtin_terminal_specs()
+        .iter()
+        .find(|(name, _, _)| *name == base_name);
+    let (exec_flag, workdir_strategy) = if let Some((_, ef, ws)) = spec {
+        (ef.iter().map(|s| s.to_string()).collect(), ws.clone())
+    } else {
+        (vec!["-e".to_string()], None)
+    };
+    Some(ResolvedTerminal {
+        bin: p,
+        args: tokens[1..].to_vec(),
+        exec_flag,
+        workdir_strategy,
+    })
+}
+
+fn read_ini_raw_value(path: &Path, group: &str, key: &str) -> Option<String> {
+    let content = fs::read_to_string(path).ok()?;
+    let mut in_group = group.is_empty();
+    for line in content.lines() {
+        let line = line.trim();
+        if line.starts_with('[') && line.ends_with(']') {
+            let current_section = &line[1..line.len() - 1];
+            in_group = current_section == group;
+            continue;
+        }
+        if in_group {
+            if let Some((k, v)) = line.split_once('=') {
+                if k.trim() == key {
+                    let val = v.trim();
+                    if !val.is_empty() {
+                        return Some(val.to_string());
+                    }
+                }
+            }
         }
     }
     None
 }
 
-/// Opens a terminal in `dir`.
-pub fn open_terminal_in(dir: &Path) -> std::io::Result<()> {
-    let candidates: [(&str, &[&str]); 10] = [
-        ("xdg-terminal-exec", &[]),
-        ("kgx", &[]),
-        ("gnome-terminal", &[]),
-        ("konsole", &[]),
-        ("kitty", &[]),
-        ("alacritty", &[]),
-        ("foot", &[]),
-        ("wezterm", &["start", "--cwd", "."]),
-        ("ghostty", &[]),
-        ("xterm", &[]),
-    ];
-    for (bin, args) in candidates {
-        if let Some(p) = util::which(bin) {
-            let mut cmd = Command::new(p);
-            cmd.args(args).current_dir(dir);
-            return util::spawn_detached(cmd);
+fn resolve_desktop_terminal_with(
+    desktop: &str,
+    which_fn: &impl Fn(&str) -> Option<PathBuf>,
+    cfg_dir: &Path,
+) -> Option<ResolvedTerminal> {
+    let kde = || {
+        read_ini_raw_value(
+            &cfg_dir.join("kdeglobals"),
+            "General",
+            "TerminalApplication",
+        )
+        .and_then(|cmd| parse_terminal_candidate(&cmd, which_fn))
+    };
+    let gsettings = || {
+        let gsettings_bin = which_fn("gsettings")?;
+        let (ok, out, _) = util::run_capture(
+            {
+                let mut cmd = Command::new(gsettings_bin);
+                cmd.args([
+                    "get",
+                    "org.gnome.desktop.default-applications.terminal",
+                    "exec",
+                ]);
+                cmd
+            },
+            None,
+        );
+        if !ok {
+            return None;
+        }
+        let exec = out.trim().trim_matches('\'').trim().to_string();
+        if exec.is_empty() {
+            return None;
+        }
+        parse_terminal_candidate(&exec, which_fn)
+    };
+    let xfce = || {
+        read_ini_raw_value(&cfg_dir.join("xfce4/helpers.rc"), "", "TerminalEmulator")
+            .and_then(|cmd| parse_terminal_candidate(&cmd, which_fn))
+    };
+
+    let desk = desktop.to_uppercase();
+    if desk.contains("KDE") {
+        kde().or_else(gsettings).or_else(xfce)
+    } else if desk.contains("GNOME") {
+        gsettings().or_else(kde).or_else(xfce)
+    } else if desk.contains("XFCE") {
+        xfce().or_else(kde).or_else(gsettings)
+    } else {
+        kde().or_else(gsettings).or_else(xfce)
+    }
+}
+
+fn resolve_terminal_with(
+    env_term: Option<&str>,
+    desktop: &str,
+    which_fn: impl Fn(&str) -> Option<PathBuf>,
+    cfg_dir: &Path,
+) -> Option<ResolvedTerminal> {
+    if let Some(t) = env_term {
+        if let Some(res) = parse_terminal_candidate(t, &which_fn) {
+            return Some(res);
         }
     }
-    Err(std::io::Error::new(std::io::ErrorKind::NotFound, "no terminal emulator found"))
+    if let Some(p) = which_fn("xdg-terminal-exec") {
+        return Some(ResolvedTerminal {
+            bin: p,
+            args: vec![],
+            exec_flag: vec![],
+            workdir_strategy: Some(WorkdirStrategy::FlagJoin("--dir=")),
+        });
+    }
+    if let Some(res) = resolve_desktop_terminal_with(desktop, &which_fn, cfg_dir) {
+        return Some(res);
+    }
+    for (bin, ef, ws) in builtin_terminal_specs() {
+        if let Some(p) = which_fn(bin) {
+            return Some(ResolvedTerminal {
+                bin: p,
+                args: vec![],
+                exec_flag: ef.iter().map(|s| s.to_string()).collect(),
+                workdir_strategy: ws.clone(),
+            });
+        }
+    }
+    None
+}
+
+/// A terminal emulator command prefix ("kitty", "-e") for Terminal=true apps
+/// and "Open in Terminal".
+pub fn terminal_command() -> Option<(PathBuf, Vec<String>)> {
+    let env_term = std::env::var("TERMINAL").ok();
+    let desktop = std::env::var("XDG_CURRENT_DESKTOP").unwrap_or_default();
+    let cfg = util::config_home();
+    let res = resolve_terminal_with(env_term.as_deref(), &desktop, util::which, &cfg)?;
+    Some(res.for_command())
+}
+
+/// Opens a terminal in `dir`.
+pub fn open_terminal_in(dir: &Path) -> std::io::Result<()> {
+    if !dir.is_dir() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            Message::key(MessageKey::NotifyNoTerminal).to_string(),
+        ));
+    }
+    let env_term = std::env::var("TERMINAL").ok();
+    let desktop = std::env::var("XDG_CURRENT_DESKTOP").unwrap_or_default();
+    let cfg = util::config_home();
+    let Some(res) = resolve_terminal_with(env_term.as_deref(), &desktop, util::which, &cfg) else {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            Message::key(MessageKey::NotifyNoTerminal).to_string(),
+        ));
+    };
+
+    let (bin, args) = res.for_open_in(dir);
+    let mut cmd = Command::new(bin);
+    cmd.args(args).current_dir(dir);
+    util::spawn_detached(cmd)
 }
 
 /// Launches `app` with `files`.
 pub fn launch(app: &DesktopApp, files: &[PathBuf]) -> std::io::Result<()> {
     let mut argv = expand_exec(app, files);
     if argv.is_empty() {
-        return Err(std::io::Error::new(std::io::ErrorKind::InvalidInput, "empty Exec line"));
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            Message::key(MessageKey::NotifyEmptyExec).to_string(),
+        ));
     }
     if app.terminal {
         if let Some((term, prefix)) = terminal_command() {
@@ -540,7 +821,9 @@ const PLACEHOLDERS: [&str; 4] = ["%f", "%F", "%u", "%U"];
 
 /// True when a typed command uses shell syntax and must run verbatim.
 pub fn uses_shell_syntax(command: &str) -> bool {
-    command.contains(['|', '&', ';', '>', '<', '`', '$', '(', ')', '{', '}', '*', '?', '\n'])
+    command.contains([
+        '|', '&', ';', '>', '<', '`', '$', '(', ')', '{', '}', '*', '?', '\n',
+    ])
 }
 
 /// Turns a user-typed command into a `sh -c` script that reads the file
@@ -593,9 +876,17 @@ mod tests {
         assert_eq!(app.mimes, vec!["image/png", "image/*"]);
         let gone = write_desktop(&d, "gone.desktop", "[Desktop Entry]\nType=Application\nName=Gone\nExec=gone\nTryExec=/definitely/not/here\n");
         assert!(parse_desktop_file(&gone, "gone").is_none());
-        let hidden = write_desktop(&d, "h.desktop", "[Desktop Entry]\nType=Application\nName=H\nExec=h\nHidden=true\n");
+        let hidden = write_desktop(
+            &d,
+            "h.desktop",
+            "[Desktop Entry]\nType=Application\nName=H\nExec=h\nHidden=true\n",
+        );
         assert!(parse_desktop_file(&hidden, "h").is_none());
-        let link = write_desktop(&d, "l.desktop", "[Desktop Entry]\nType=Link\nName=L\nURL=x\n");
+        let link = write_desktop(
+            &d,
+            "l.desktop",
+            "[Desktop Entry]\nType=Link\nName=L\nURL=x\n",
+        );
         assert!(parse_desktop_file(&link, "l").is_none());
         fs::remove_dir_all(&d).unwrap();
     }
@@ -615,14 +906,26 @@ mod tests {
         let files = vec![PathBuf::from("/a b/c.txt"), PathBuf::from("/d.txt")];
         let argv = expand_exec(&app, &files);
         assert_eq!(argv[0], "x");
-        assert_eq!(argv[1], "--title=%c", "quoted codes inside args stay literal");
-        assert_eq!(&argv[2..4], &["/a b/c.txt".to_string(), "/d.txt".to_string()]);
+        assert_eq!(
+            argv[1], "--title=%c",
+            "quoted codes inside args stay literal"
+        );
+        assert_eq!(
+            &argv[2..4],
+            &["/a b/c.txt".to_string(), "/d.txt".to_string()]
+        );
         assert!(argv.contains(&"--icon".to_string()) && argv.contains(&"x-icon".to_string()));
         assert_eq!(argv.last().unwrap(), "--opt=/a b/c.txt");
 
-        let uri_app = DesktopApp { exec: "open %u".into(), ..app.clone() };
+        let uri_app = DesktopApp {
+            exec: "open %u".into(),
+            ..app.clone()
+        };
         assert_eq!(expand_exec(&uri_app, &files)[1], "file:///a%20b/c.txt");
-        let flatpak = DesktopApp { exec: "/usr/bin/flatpak run --file-forwarding org.x @@u %U @@".into(), ..app };
+        let flatpak = DesktopApp {
+            exec: "/usr/bin/flatpak run --file-forwarding org.x @@u %U @@".into(),
+            ..app
+        };
         let argv = expand_exec(&flatpak, &files[..1]);
         assert_eq!(argv.last().unwrap(), "file:///a%20b/c.txt");
     }
@@ -655,15 +958,24 @@ mod tests {
     fn custom_commands() {
         assert_eq!(command_script("mpv"), "mpv \"$1\"");
         assert_eq!(command_script("mpv %f --fs"), "mpv \"$1\" --fs");
-        assert_eq!(command_script("ffmpeg -i \"%f\" o.mp4"), "ffmpeg -i \"$1\" o.mp4");
+        assert_eq!(
+            command_script("ffmpeg -i \"%f\" o.mp4"),
+            "ffmpeg -i \"$1\" o.mp4"
+        );
         assert_eq!(command_script("cat '%f'"), "cat \"$1\"");
         assert_eq!(command_script("echo hi | wc"), "echo hi | wc");
         // The path only ever arrives as an argument.
         let d = std::env::temp_dir().join(format!("loaf-cmd-{}", std::process::id()));
         fs::create_dir_all(&d).unwrap();
         let evil = d.join("x\"$(touch pwned)\"'`touch pwned2`'");
-        let out = Command::new("sh").arg("-c").arg(command_script("printf %s \"%f\"")).arg("sh").arg(&evil)
-            .current_dir(&d).output().unwrap();
+        let out = Command::new("sh")
+            .arg("-c")
+            .arg(command_script("printf %s \"%f\""))
+            .arg("sh")
+            .arg(&evil)
+            .current_dir(&d)
+            .output()
+            .unwrap();
         assert_eq!(String::from_utf8_lossy(&out.stdout), evil.to_string_lossy());
         assert!(!d.join("pwned").exists() && !d.join("pwned2").exists());
         let _ = fs::remove_dir_all(&d);
@@ -671,6 +983,375 @@ mod tests {
 
     #[test]
     fn tokenizer() {
-        assert_eq!(tokenize(r#"a "b c" d\ e '' f"#), vec!["a", "b c", "d e", "", "f"]);
+        assert_eq!(
+            tokenize(r#"a "b c" d\ e '' f"#),
+            vec!["a", "b c", "d e", "", "f"]
+        );
+        // Legacy tolerant behavior for unclosed quote / trailing escape in desktop Exec lines
+        assert_eq!(tokenize(r#"a "unclosed"#), vec!["a", "unclosed"]);
+        assert_eq!(tokenize(r#"a trailing\"#), vec!["a", "trailing"]);
+
+        // Strict behavior required for terminal preference validation
+        assert_eq!(
+            tokenize_strict(r#"a "b c" d\ e '' f"#),
+            Some(vec![
+                "a".into(),
+                "b c".into(),
+                "d e".into(),
+                "".into(),
+                "f".into()
+            ])
+        );
+        assert_eq!(tokenize_strict(r#"a "unclosed"#), None);
+        assert_eq!(tokenize_strict(r#"a trailing\"#), None);
+        assert_eq!(tokenize_strict("   "), None);
+    }
+
+    #[test]
+    fn terminal_selection_precedence_and_args() {
+        let temp_dir = std::env::temp_dir().join(format!("loaf-term-test-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&temp_dir);
+        fs::create_dir_all(&temp_dir).unwrap();
+
+        let fake_which = |name: &str| match name {
+            "konsole" => Some(PathBuf::from("/bin/konsole")),
+            "kitty" => Some(PathBuf::from("/bin/kitty")),
+            "alacritty" => Some(PathBuf::from("/bin/alacritty")),
+            "xdg-terminal-exec" => Some(PathBuf::from("/bin/xdg-terminal-exec")),
+            "wezterm" => Some(PathBuf::from("/bin/wezterm")),
+            "gnome-terminal" => Some(PathBuf::from("/bin/gnome-terminal")),
+            "kgx" => Some(PathBuf::from("/bin/kgx")),
+            "ghostty" => Some(PathBuf::from("/bin/ghostty")),
+            "xfce4-terminal" => Some(PathBuf::from("/bin/xfce4-terminal")),
+            "tilix" => Some(PathBuf::from("/bin/tilix")),
+            "custom-term" => Some(PathBuf::from("/usr/local/bin/custom-term")),
+            "/opt/My Term/kitty" => Some(PathBuf::from("/opt/My Term/kitty")),
+            _ => None,
+        };
+
+        // 1. Host regression case: Konsole and Kitty both installed, kdeglobals has kitty -1.
+        // Konsole must not win over configured Kitty.
+        let kde_cfg = temp_dir.join("kdeglobals");
+        fs::write(&kde_cfg, "[General]\nTerminalApplication=kitty -1\n").unwrap();
+
+        let fake_no_xdg = |name: &str| match name {
+            "konsole" => Some(PathBuf::from("/bin/konsole")),
+            "kitty" => Some(PathBuf::from("/bin/kitty")),
+            "/opt/My Term/kitty" => Some(PathBuf::from("/opt/My Term/kitty")),
+            _ => None,
+        };
+        let res = resolve_terminal_with(None, "KDE", fake_no_xdg, &temp_dir).unwrap();
+        assert_eq!(res.bin, PathBuf::from("/bin/kitty"));
+        assert_eq!(res.args, vec!["-1"]);
+        let (open_bin, open_args) = res.for_open_in(Path::new("/home/user/my dir"));
+        assert_eq!(open_bin, PathBuf::from("/bin/kitty"));
+        assert_eq!(open_args, vec!["-1", "-d", "/home/user/my dir"]);
+
+        // 2. Precedence: TERMINAL override beats xdg-terminal-exec and desktop config.
+        let res = resolve_terminal_with(
+            Some("custom-term --flag 'with space'"),
+            "KDE",
+            fake_which,
+            &temp_dir,
+        )
+        .unwrap();
+        assert_eq!(res.bin, PathBuf::from("/usr/local/bin/custom-term"));
+        assert_eq!(res.args, vec!["--flag", "with space"]);
+        assert_eq!(res.exec_flag, vec!["-e"]);
+        let (cmd_bin, cmd_args) = res.for_command();
+        assert_eq!(cmd_bin, PathBuf::from("/usr/local/bin/custom-term"));
+        assert_eq!(cmd_args, vec!["--flag", "with space", "-e"]);
+
+        // 3. Precedence: xdg-terminal-exec beats desktop config when no TERMINAL override.
+        // xdg-terminal-exec syntax requires monolithic --dir=/path option per upstream spec.
+        let res = resolve_terminal_with(None, "KDE", fake_which, &temp_dir).unwrap();
+        assert_eq!(res.bin, PathBuf::from("/bin/xdg-terminal-exec"));
+        let (open_bin, open_args) = res.for_open_in(Path::new("/tmp/test dir"));
+        assert_eq!(open_bin, PathBuf::from("/bin/xdg-terminal-exec"));
+        assert_eq!(open_args, vec!["--dir=/tmp/test dir"]);
+
+        // Also if user explicitly sets TERMINAL="xdg-terminal-exec", same spec applies.
+        let res_explicit =
+            resolve_terminal_with(Some("xdg-terminal-exec"), "KDE", fake_which, &temp_dir).unwrap();
+        assert_eq!(res_explicit.bin, PathBuf::from("/bin/xdg-terminal-exec"));
+        assert_eq!(
+            res_explicit.for_open_in(Path::new("/tmp")).1,
+            vec!["--dir=/tmp"]
+        );
+
+        // 4. Stale/unavailable executable in desktop preference falls back gracefully.
+        fs::write(
+            &kde_cfg,
+            "[General]\nTerminalApplication=nonexistent-term --opt\n",
+        )
+        .unwrap();
+        let res = resolve_terminal_with(None, "KDE", fake_no_xdg, &temp_dir).unwrap();
+        // Fallback kicks in and picks konsole from installed candidates
+        assert_eq!(res.bin, PathBuf::from("/bin/konsole"));
+        let (open_bin, open_args) = res.for_open_in(Path::new("/tmp"));
+        assert_eq!(open_bin, PathBuf::from("/bin/konsole"));
+        assert_eq!(open_args, vec!["--workdir", "/tmp"]);
+
+        // 5. Malformed preference strings (unclosed quote, trailing escape) fall back safely.
+        fs::write(
+            &kde_cfg,
+            "[General]\nTerminalApplication=kitty \"unclosed\n",
+        )
+        .unwrap();
+        let res = resolve_terminal_with(None, "KDE", fake_no_xdg, &temp_dir).unwrap();
+        assert_eq!(res.bin, PathBuf::from("/bin/konsole"));
+
+        fs::write(
+            &kde_cfg,
+            "[General]\nTerminalApplication=kitty trailing\\\n",
+        )
+        .unwrap();
+        let res = resolve_terminal_with(None, "KDE", fake_no_xdg, &temp_dir).unwrap();
+        assert_eq!(res.bin, PathBuf::from("/bin/konsole"));
+
+        fs::write(&kde_cfg, "[General]\nTerminalApplication=\"   \"\n").unwrap();
+        let res = resolve_terminal_with(None, "KDE", fake_no_xdg, &temp_dir).unwrap();
+        assert_eq!(res.bin, PathBuf::from("/bin/konsole"));
+
+        // 6. Shell metacharacters are treated as data, never executed via shell.
+        fs::write(
+            &kde_cfg,
+            "[General]\nTerminalApplication=kitty -T \"`touch pwned`\" $(uname)\n",
+        )
+        .unwrap();
+        let res = resolve_terminal_with(None, "KDE", fake_no_xdg, &temp_dir).unwrap();
+        assert_eq!(res.bin, PathBuf::from("/bin/kitty"));
+        assert_eq!(res.args, vec!["-T", "`touch pwned`", "$(uname)"]);
+        assert!(!temp_dir.join("pwned").exists());
+
+        // 7. No terminal installed returns None and open_terminal_in returns NotFound.
+        let fake_none = |_name: &str| None;
+        assert!(resolve_terminal_with(None, "KDE", fake_none, &temp_dir).is_none());
+
+        // 8. Non-directory / invalid path rejected by open_terminal_in.
+        let non_dir = temp_dir.join("file.txt");
+        fs::write(&non_dir, "content").unwrap();
+        let err = open_terminal_in(&non_dir).unwrap_err();
+        assert_eq!(err.kind(), std::io::ErrorKind::NotFound);
+
+        // 9. Existing Terminal=true desktop app wrapping with terminal_command.
+        let app = DesktopApp {
+            id: "term-cli".to_string(),
+            name: "CLI App".to_string(),
+            exec: "cli-tool --opt %f".to_string(),
+            icon: "utilities-terminal".to_string(),
+            mimes: vec![],
+            terminal: true,
+            no_display: false,
+            path: PathBuf::from("/usr/share/applications/term-cli.desktop"),
+        };
+        let (term_bin, prefix) = res.for_command();
+        let mut full = vec![term_bin.to_string_lossy().to_string()];
+        full.extend(prefix);
+        let mut argv = expand_exec(&app, &[PathBuf::from("/tmp/doc.txt")]);
+        full.append(&mut argv);
+        assert_eq!(
+            full,
+            vec![
+                "/bin/kitty",
+                "-T",
+                "`touch pwned`",
+                "$(uname)",
+                "cli-tool",
+                "--opt",
+                "/tmp/doc.txt"
+            ]
+        );
+
+        // 10. Quoted executable path with spaces in desktop config.
+        fs::write(
+            &kde_cfg,
+            "[General]\nTerminalApplication=\"/opt/My Term/kitty\" -1\n",
+        )
+        .unwrap();
+        let res = resolve_terminal_with(None, "KDE", fake_no_xdg, &temp_dir).unwrap();
+        assert_eq!(res.bin, PathBuf::from("/opt/My Term/kitty"));
+        assert_eq!(res.args, vec!["-1"]);
+
+        // 11. Unsectioned XFCE helpers.rc support.
+        let xfce_dir = temp_dir.join("xfce4");
+        fs::create_dir_all(&xfce_dir).unwrap();
+        fs::write(xfce_dir.join("helpers.rc"), "TerminalEmulator=kitty -1\n").unwrap();
+        let res = resolve_terminal_with(None, "XFCE", fake_no_xdg, &temp_dir).unwrap();
+        assert_eq!(res.bin, PathBuf::from("/bin/kitty"));
+        assert_eq!(res.args, vec!["-1"]);
+
+        // 12. WezTerm open-in-folder requires 'start --cwd <dir>' without duplicating 'start'.
+        let fake_wezterm_only = |name: &str| match name {
+            "wezterm" => Some(PathBuf::from("/bin/wezterm")),
+            _ => None,
+        };
+        let res = resolve_terminal_with(None, "", fake_wezterm_only, &temp_dir).unwrap();
+        assert_eq!(res.bin, PathBuf::from("/bin/wezterm"));
+        let (w_bin, w_open) = res.for_open_in(Path::new("/tmp/my folder"));
+        assert_eq!(w_bin, PathBuf::from("/bin/wezterm"));
+        assert_eq!(w_open, vec!["start", "--cwd", "/tmp/my folder"]);
+
+        // If user configured "wezterm start --flag", 'start' must not be duplicated.
+        let res_configured =
+            resolve_terminal_with(Some("wezterm start --some-flag"), "", fake_which, &temp_dir)
+                .unwrap();
+        let (_, w_open_configured) = res_configured.for_open_in(Path::new("/tmp/my folder"));
+        assert_eq!(
+            w_open_configured,
+            vec!["start", "--some-flag", "--cwd", "/tmp/my folder"]
+        );
+
+        // Also for Terminal=true command execution: 'start' must not be duplicated in for_command()!
+        let (_, w_cmd_configured) = res_configured.for_command();
+        assert_eq!(w_cmd_configured, vec!["start", "--some-flag", "--"]);
+
+        // 13. kgx, gnome-terminal, ghostty, xfce4-terminal, tilix verified working-directory arguments.
+        let fake_gnome = |name: &str| match name {
+            "gnome-terminal" => Some(PathBuf::from("/bin/gnome-terminal")),
+            _ => None,
+        };
+        let res = resolve_terminal_with(None, "", fake_gnome, &temp_dir).unwrap();
+        assert_eq!(
+            res.for_open_in(Path::new("/tmp")).1,
+            vec!["--working-directory=/tmp"]
+        );
+
+        let fake_kgx = |name: &str| match name {
+            "kgx" => Some(PathBuf::from("/bin/kgx")),
+            _ => None,
+        };
+        let res = resolve_terminal_with(None, "", fake_kgx, &temp_dir).unwrap();
+        assert_eq!(
+            res.for_open_in(Path::new("/tmp")).1,
+            vec!["--working-directory=/tmp"]
+        );
+
+        let fake_ghostty = |name: &str| match name {
+            "ghostty" => Some(PathBuf::from("/bin/ghostty")),
+            _ => None,
+        };
+        let res = resolve_terminal_with(None, "", fake_ghostty, &temp_dir).unwrap();
+        assert_eq!(
+            res.for_open_in(Path::new("/tmp")).1,
+            vec!["--working-directory=/tmp"]
+        );
+
+        let fake_xfce_term = |name: &str| match name {
+            "xfce4-terminal" => Some(PathBuf::from("/bin/xfce4-terminal")),
+            _ => None,
+        };
+        let res = resolve_terminal_with(None, "", fake_xfce_term, &temp_dir).unwrap();
+        assert_eq!(
+            res.for_open_in(Path::new("/tmp")).1,
+            vec!["--working-directory=/tmp"]
+        );
+
+        let fake_tilix = |name: &str| match name {
+            "tilix" => Some(PathBuf::from("/bin/tilix")),
+            _ => None,
+        };
+        let res = resolve_terminal_with(None, "", fake_tilix, &temp_dir).unwrap();
+        assert_eq!(res.for_open_in(Path::new("/tmp")).1, vec!["-w", "/tmp"]);
+
+        let _ = fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn terminal_spawn_captures_argv_and_cwd() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let temp_dir = std::env::temp_dir().join(format!("loaf-spawn-test-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&temp_dir);
+        fs::create_dir_all(&temp_dir).unwrap();
+
+        let bin_dir = temp_dir.join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+
+        let capture_log = temp_dir.join("capture.log");
+        let fake_term = bin_dir.join("my-fake-term");
+
+        // Pass capture file path safely as first argument; no shell code interpolation.
+        // Script writes atomically via temp file + rename and outputs DONE marker.
+        let script = r#"#!/bin/sh
+out="$1"
+shift
+tmp="${out}.tmp.$$"
+echo "CWD: $(pwd)" > "$tmp"
+for a in "$@"; do
+  echo "ARG: $a" >> "$tmp"
+done
+echo "DONE" >> "$tmp"
+mv "$tmp" "$out"
+"#;
+        fs::write(&fake_term, script).unwrap();
+        let mut perms = fs::metadata(&fake_term).unwrap().permissions();
+        perms.set_mode(0o755);
+        fs::set_permissions(&fake_term, perms).unwrap();
+
+        // Target directory with special characters, quotes, and spaces
+        let target_dir = temp_dir.join("folder with spaces & $symbols; 'quotes'");
+        fs::create_dir_all(&target_dir).unwrap();
+
+        // Configure fake terminal in test kdeglobals, passing capture_log as first arg
+        let kde_cfg = temp_dir.join("kdeglobals");
+        fs::write(
+            &kde_cfg,
+            format!(
+                "[General]\nTerminalApplication=\"{}\" \"{}\" --custom-arg \"val with space\"\n",
+                fake_term.to_string_lossy(),
+                capture_log.to_string_lossy()
+            ),
+        )
+        .unwrap();
+
+        let which_fn = |name: &str| {
+            if name == fake_term.to_str().unwrap() || name == "my-fake-term" {
+                Some(fake_term.clone())
+            } else {
+                None
+            }
+        };
+
+        let resolved = resolve_terminal_with(None, "KDE", which_fn, &temp_dir)
+            .expect("must resolve configured fake terminal");
+
+        let (bin, args) = resolved.for_open_in(&target_dir);
+        let mut cmd = Command::new(&bin);
+        cmd.args(&args).current_dir(&target_dir);
+
+        let spawn_res = util::spawn_detached(cmd);
+        assert!(spawn_res.is_ok(), "spawn_detached failed: {:?}", spawn_res);
+
+        // Wait bounded time for DONE marker in atomically published capture log
+        let mut captured = String::new();
+        for _ in 0..50 {
+            if let Ok(c) = fs::read_to_string(&capture_log) {
+                if c.contains("DONE\n") {
+                    captured = c;
+                    break;
+                }
+            }
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
+
+        assert!(
+            !captured.is_empty(),
+            "fake terminal was not executed or did not complete within timeout"
+        );
+        let lines: Vec<&str> = captured.lines().collect();
+
+        // 1. Child process working directory matches requested target_dir exactly
+        assert_eq!(lines[0], format!("CWD: {}", target_dir.to_string_lossy()));
+
+        // 2. Arguments preserved literally without shell interpretation or loss of spaces
+        assert_eq!(lines[1], "ARG: --custom-arg");
+        assert_eq!(lines[2], "ARG: val with space");
+        assert_eq!(lines[3], "DONE");
+
+        // 3. Unknown terminal does not receive guessed working-directory flag; default exec flag is -e
+        assert_eq!(lines.len(), 4);
+
+        let _ = fs::remove_dir_all(&temp_dir);
     }
 }

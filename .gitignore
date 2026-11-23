@@ -1,3 +1,5 @@
 /target/
 result
 .qmlls.ini
+# compiled translations (lrelease, at build time)
+*.qm

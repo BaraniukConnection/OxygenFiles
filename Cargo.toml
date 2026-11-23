@@ -1,7 +1,12 @@
 [package]
 name = "loaf"
-version = "0.1.0"
+version = "0.4.0"
 edition = "2021"
+license = "MIT"
+description = "Material 3 Expressive file manager built with Rust and Qt 6"
+repository = "https://github.com/m-uvex/loaf-fm"
+homepage = "https://github.com/m-uvex/loaf-fm"
+authors = ["Musa Murad <musamurad@proton.me>"]
 
 [dependencies]
 cxx = "1.0"
@@ -10,6 +15,12 @@ cxx-qt-lib = { version = "0.10.0", features = ["qt_gui", "qt_qml"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 libc = "0.2"
+strum = { version = "0.26", features = ["derive"] }
 
 [build-dependencies]
 cxx-qt-build = "0.10.0"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = "symbols"

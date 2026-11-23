@@ -13,8 +13,15 @@ Item {
 
     property bool checked: false
     property string label: ""
+    // Optional shortcut hint rendered between the label and the track.
+    property string shortcut: ""
 
     signal toggled(bool checked)
+
+    function toggle() {
+        root.checked = !root.checked;
+        root.toggled(root.checked);
+    }
 
     transform: Translate { id: switchTranslate; y: 0 }
 
@@ -47,16 +54,27 @@ Item {
         root.opacity = 1.0;
     }
 
+
     RowLayout {
         anchors.fill: parent
-        spacing: 10
+        spacing: root.label.length > 0 ? 10 : 0
 
         Text {
             text: root.label
+            visible: root.label.length > 0
             color: theme.textMain
             font.pixelSize: theme.fs(13)
-            Layout.fillWidth: true
+            Layout.fillWidth: root.label.length > 0
             elide: Text.ElideRight
+        }
+
+        Text {
+            visible: root.shortcut.length > 0
+            text: root.shortcut
+            color: theme.outline
+            font.pixelSize: theme.fs(11)
+            font.family: theme.fontFamily
+            Layout.alignment: Qt.AlignHCenter
         }
 
         Rectangle {
@@ -64,20 +82,35 @@ Item {
             Layout.alignment: Qt.AlignVCenter
             Layout.preferredWidth: 46
             Layout.preferredHeight: 26
+            // Soft hover halo, revealed when the pointer is over the switch
+            // (a child drawn behind the track: anchors can't reach across the layout).
+            Rectangle {
+                z: -1
+                anchors.fill: parent
+                anchors.margins: -5
+                radius: theme.radiusFull
+                color: theme.primary
+                opacity: switchMouse.containsMouse ? (root.checked ? 0.16 : 0.09) : 0.0
+                visible: opacity > 0.01
+
+                Behavior on opacity { enabled: theme.animate; NumberAnimation { duration: 150; easing.type: Easing.OutCubic } }
+            }
+
             radius: theme.radiusFull
             color: root.checked ? theme.primary : theme.surfaceContainerHighest
             border.width: root.checked ? 0 : 1
-            border.color: theme.outline
+            border.color: switchMouse.containsMouse && !root.checked ? theme.primary : theme.outlineAlpha(theme.outline)
 
             Behavior on color { enabled: theme.animate; ColorAnimation { duration: 140 } }
             Behavior on border.width { enabled: theme.animate; NumberAnimation { duration: 140 } }
+            Behavior on border.color { enabled: theme.animate; ColorAnimation { duration: 140 } }
 
             Rectangle {
                 id: thumb
                 height: width
                 radius: width / 2
                 y: (track.height - height) / 2
-                width: switchMouse.pressed ? 24 : 18
+                width: switchMouse.pressed ? 24 : (switchMouse.containsMouse ? 20 : 18)
                 x: root.checked ? (track.width - width - 4) : 4
                 color: root.checked ? theme.primaryFg : theme.outline
 
@@ -91,11 +124,12 @@ Item {
                 anchors.fill: parent
                 hoverEnabled: true
                 cursorShape: Qt.PointingHandCursor
-                onClicked: {
-                    root.checked = !root.checked;
-                    root.toggled(root.checked);
-                }
+                onClicked: root.toggle()
             }
         }
     }
+
+    Accessible.role: Accessible.CheckBox
+    Accessible.name: root.label
+    Accessible.description: root.checked ? qsTr("On") : qsTr("Off")
 }

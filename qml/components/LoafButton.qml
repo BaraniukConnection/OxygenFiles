@@ -12,11 +12,20 @@ Item {
     property string variant: "text"
     property bool checked: false
     property string accessibleName: ""
+    // Hover label shown after the shared tooltip delay; empty keeps it silent.
+    property string tooltipText: ""
     Accessible.name: accessibleName.length > 0 ? accessibleName : (text.length > 0 ? text : icon)
+
+    // Hover signals for callers that want their own hover handling (e.g.
+    // tooltip wiring from outside this file).
+    signal hoverEntered()
+    signal hoverExited()
 
     signal clicked()
 
     readonly property bool iconOnly: text.length === 0
+    readonly property alias containsMouse: mouse.containsMouse
+    readonly property alias hovered: mouse.containsMouse
 
     implicitHeight: 34
     implicitWidth: iconOnly ? 34 : (contentRow.implicitWidth + 28)
@@ -77,7 +86,7 @@ Item {
         radius: theme.radiusFull
         color: mouse.containsMouse ? root.hoverBg : root.bgColor
         border.width: root.variant === "outlined" ? 1 : 0
-        border.color: theme.outline
+        border.color: theme.outlineAlpha(theme.outline)
 
         Behavior on color { enabled: theme.animate; ColorAnimation { duration: 120 } }
     }
@@ -100,6 +109,8 @@ Item {
             color: root.fgColor
             font.pixelSize: theme.fs(13)
             font.bold: root.variant === "filled" || root.variant === "tonal"
+            font.weight: theme.fw(root.variant === "filled" || root.variant === "tonal")
+            font.family: theme.fontFamily
         }
     }
 
@@ -109,6 +120,16 @@ Item {
         hoverEnabled: true
         enabled: root.enabled
         cursorShape: Qt.PointingHandCursor
+        onEntered: {
+            root.hoverEntered();
+            if (root.tooltipText.length > 0 && typeof tooltip !== "undefined")
+                tooltip.show(root, root.tooltipText)
+        }
+        onExited: {
+            root.hoverExited();
+            if (typeof tooltip !== "undefined")
+                tooltip.hide(root)
+        }
         onClicked: root.clicked()
     }
 }

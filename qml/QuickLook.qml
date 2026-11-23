@@ -11,10 +11,6 @@ LoafPopup {
     modal: true
     closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
 
-    // Window shortcuts are blocked while a modal popup is open, so Space
-    // (which opened Quick Look) needs its own shortcut to close it again.
-    Shortcut { sequence: "Space"; enabled: quickLook.visible; onActivated: quickLook.close() }
-
     transformOrigin: Item.Center
     scale: 0.15
     opacity: 0.0
@@ -74,8 +70,6 @@ LoafPopup {
         openAt((window.width - width) / 2, (window.height - height) / 2);
     }
 
-    // ---- markup helpers ---------------------------------------------------
-
     function escapeHtml(s) {
         return String(s)
             .replace(/&/g, "&amp;")
@@ -131,9 +125,9 @@ LoafPopup {
     function highlightCode(code, language) {
         var keywords = keywordsFor(language);
         var commentColor = theme.outline;
-        var stringColor = theme.isDark ? "#8bd5a4" : "#0b7a3f";
-        var numberColor = theme.isDark ? "#f0b072" : "#a35b00";
-        var keywordColor = theme.primary;
+        var stringColor = theme.syntaxString;
+        var numberColor = theme.syntaxNumber;
+        var keywordColor = theme.syntaxKeyword;
 
         // One pass over the source: the first alternative that matches at a
         // position wins, so comments/strings are consumed whole.
@@ -238,8 +232,6 @@ LoafPopup {
         return "<pre style=\"margin:0px\">" + highlightCode(text, info.language) + "</pre>";
     }
 
-    // ---- content ----------------------------------------------------------
-
     ColumnLayout {
         width: quickLook.width - 2 * quickLook.contentPadding
         spacing: 10
@@ -269,7 +261,7 @@ LoafPopup {
                 Text {
                     Layout.fillWidth: true
                     text: (quickLook.info.size_str || "-") + "  ·  "
-                        + (quickLook.info.modified_str || "-") + "  ·  "
+                        + theme.relativeTime(quickLook.info.modified || 0) + "  ·  "
                         + (quickLook.info.path || "")
                     color: theme.textMuted
                     font.pixelSize: theme.fs(11)
@@ -281,10 +273,9 @@ LoafPopup {
         Rectangle {
             Layout.fillWidth: true
             Layout.preferredHeight: 1
-            color: theme.separator
+            color: theme.outlineAlpha(theme.separator)
         }
 
-        // Image preview
         Item {
             visible: quickLook.info.kind === "image" || ((quickLook.info.kind === "thumbnail" || quickLook.info.kind === "media") && quickLookImage.status === Image.Ready)
             Layout.fillWidth: true
@@ -315,7 +306,6 @@ LoafPopup {
             }
         }
 
-        // Text / code / markdown preview
         Flickable {
             id: previewFlick
             visible: quickLook.info.kind === "text" || quickLook.info.kind === "archive"
@@ -337,8 +327,6 @@ LoafPopup {
                 textFormat: Text.RichText
                 color: theme.textMain
                 font.pixelSize: theme.fs(13)
-                // Code keeps its own line breaks and scrolls sideways;
-                // prose wraps to the pane width.
                 wrapMode: quickLook.isCode && !quickLook.isMarkdown ? Text.NoWrap : Text.Wrap
                 width: quickLook.isCode && !quickLook.isMarkdown
                     ? implicitWidth
@@ -346,7 +334,6 @@ LoafPopup {
             }
         }
 
-        // Folder / media / unsupported
         ColumnLayout {
             visible: quickLook.info.kind !== "image" && quickLook.info.kind !== "text" && quickLook.info.kind !== "archive"
                 && !((quickLook.info.kind === "thumbnail" || quickLook.info.kind === "media") && quickLookImage.status === Image.Ready)
@@ -366,7 +353,7 @@ LoafPopup {
             Text {
                 Layout.alignment: Qt.AlignHCenter
                 Layout.fillWidth: true
-                text: quickLook.info.note || ""
+                text: theme.resolveRustMessage(quickLook.info.note || "")
                 color: theme.textMuted
                 font.pixelSize: theme.fs(13)
                 horizontalAlignment: Text.AlignHCenter
@@ -378,7 +365,7 @@ LoafPopup {
 
         Text {
             visible: quickLook.info.truncated === true
-            text: qsTr("Preview truncated — showing the first part of the file")
+            text: qsTr("Preview truncated: showing the first part of the file")
             color: theme.textMuted
             font.pixelSize: theme.fs(11)
         }

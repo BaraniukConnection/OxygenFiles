@@ -4,7 +4,7 @@
 
 **A beautiful and fast Rust-based Material 3 Expressive file manager for Linux.**
 
-![Loaf](https://raw.githubusercontent.com/m-uvex/loaf-fm/main/img_2.png)
+<img width="1918" height="1078" alt="image" src="https://github.com/user-attachments/assets/3966949b-121a-4d59-90d5-9abcec449c21" />
 
 <br/>
 
@@ -24,188 +24,213 @@
 
 Loaf is designed to replace crowded, outdated file managers with an interface that looks modern, runs fast, and doesn't compromise on functionality. Built using **Rust** for native system performance and **Qt6 Quick / QML** for fluid Material 3 Expressive animations.
 > Note: Loaf is still at a very alpha stage, expect bugs or missing features. Contributions of any kind are very welcome!
-> Another Note: I'm kinda in need for an app icon for Loaf, if you're willing to help please DM me on discord; @m_uvex . Thank you!
 
 ---
 
 ## Features
 
-- **Material 3 Expressive Design**: Fluid spring motion, smooth path transitions, and calibrated state layers.
-- **Dynamic Theming**: 8 curated color palettes plus automatic dynamic palette generation from your desktop wallpaper.
-- **Fast Directory Navigation**: Snappy directory switching with zero disk bottlenecks and smooth directional animations.
-- **Archive Support**: One-click non-modal archive compression for `.zip`, password-protected encrypted `.zip`, `.tar.gz`, `.7z`, and advanced formats (`.tar.xz`, `.tar.zst`, `.tar.bz2`, `.cpio`).
-- **Comprehensive Undo / Redo**: Multi-step operation history (`Ctrl+Z` / `Ctrl+Y`) for renames, creations, moves, and deletions.
-- **Storage & Drive Dashboard**: "This PC" overview with internal drive pool stats, drive space indicators, mount/unmount/rename actions, and optional customizable layout.
-- **Native Trash Integration**: Standard freedesktop directory listing of trashed items with one-click restore and toolbar empty action.
-- **Multiple View Modes**: Responsive Grid View and Detailed List View with dynamic column adaptation for narrow windows.
-- **Rich Drag & Drop**: Drag files into breadcrumb chips, folders, or path bar with right-click menu options (Copy, Move, Link Here).
-- **Navigation Controls**: Mouse side buttons (Back / Forward), full keyboard navigation, and click-outside search defocusing.
-- **Tabs & Split View**: Tabs (`Ctrl+T`), a side-by-side split view (`F3`), and your tabs and window restored on the next start.
-- **Background Operations**: Copy, move, trash, compress and extract run in the background with a progress pill, cancel, undo, and a filesystem flush before removable drives report "done".
-- **Safe by Default**: freedesktop trash (also on USB drives), restores and overwrites that never lose data, archive passwords never on the command line.
-- **Live Folders**: Changes made by other programs appear instantly (inotify), only the changed rows update.
-- **Thumbnails**: Images, videos, PDFs and fonts through the shared freedesktop thumbnail cache and system thumbnailers, loaded in the background.
-- **Search**: Filter the folder as you type, or search subfolders / your whole home folder in the background, optionally inside text files.
-- **Desktop Integration**: GTK bookmarks, localized user folders, Recent and Starred, Open With / default apps, templates ("New Document"), Nautilus scripts, system clipboard, "Show in folder" from other apps, Open as Administrator.
-- **Low-Power Mode**: Turns off animations and effects automatically on machines without GPU acceleration or with little memory; reduce-motion and text-size settings for accessibility.
+### Performance & Design
+
+* **Fast by Design**: Built with a high-performance Rust backend and hardware acceleration for snappy folder navigation and low memory usage.
+* **Material 3 Expressive UI**: Modern interface with fluid spring animations, modular rounded geometry, and curated icons.
+* **Dynamic Theming & Opacity**: 8 built-in palettes, automatic accent extraction from your desktop wallpaper, and granular slider control over window transparency, foreground, and background opacity.
+* **Low-Power Mode**: Automatically disables animations, transparencies, and blur effects when on battery or low-spec hardware to conserve resources.
+
+### Navigation & Layout
+
+* **Tabs & Split View**: Multi-task efficiently with browser-style tabs (`Ctrl+T`) and side-by-side dual pane view (`F3`).
+* **Flexible View Modes**: Responsive Grid and Detailed List views featuring connected, fluid item selection.
+* **Drive & Storage Dashboard**: A dedicated "This PC" hub with partition usage bars, mount/eject controls, and customizable layouts.
+
+### Deep Customization & Extensibility
+
+* **Total Interface Customization**: Tailor the UI to your workflow—show, hide, or reorder sidebar entries, toolbar buttons, headers, and context menu actions.
+* **Full Nautilus Scripts Support**: Run your existing Nautilus scripts directly from the context menu for automated file actions.
+* **Power Actions**: Built-in context options for **Open In Terminal**, **Open With...**, and elevated administrative operations.
+
+### File Operations & Previews
+
+* **Quick Look**: Press `Space` to instantly preview images, videos, audio, and documents without launching an external app.
+* **Rich Thumbnails**: High-resolution thumbnail generation for photos, video clips, PDFs, and font files.
+* **Built-in Archive Engine**: Browse, extract, and compress `.zip`, `.tar.*`, `.7z`, and other standard formats directly within the directory tree.
+
+### Connectivity & System Integration
+
+* **Network Storage**: Connect and browse network shares effortlessly over SMB, WebDAV, and other standard protocols.
+* **P2P Link Sharing**: Generate a local link to instantly beam files and folders to any phone, PC, or browser on your network.
+* **Native XDG File Picker**: Built-in desktop file portal integration that replaces generic system dialogs with Loaf's full interface across all your apps.
 
 ---
 
 ## Installation
 
-The easiest way to install Loaf is through our interactive management script:
+### Quick Install
+
+Install or update Loaf using the interactive script:
 
 ```bash
 curl -sSL https://raw.githubusercontent.com/m-uvex/loaf-fm/main/install.sh | bash
-```
 
-The script detects your distribution and architecture, then walks you through an
-arrow-key menu to **Try** Loaf ephemerally, **Install**, **Update**, or **Uninstall** it.
-
-On Debian/Ubuntu, Arch, Fedora/RHEL and openSUSE it installs the **native package**
-(`.deb`, `.pkg.tar.zst`, `.rpm`) through your package manager, so Qt and the other
-runtime dependencies are resolved automatically. On any other distribution it falls
-back to a **universal tarball** in `~/.local` (or `/usr/local` with `sudo`). It
-installs the latest stable release by default, and can also target a specific
-release tag or build the latest development commit from source. On **NixOS** it
-prints instructions to follow the manual Nix route below instead, since NixOS
-manages packages declaratively.
-
-You can also pass a command directly for scripting:
-
-```bash
-curl -sSL https://raw.githubusercontent.com/m-uvex/loaf-fm/main/install.sh | bash -s -- install
-# also: try, update, uninstall
 ```
 
 ---
 
-## Alternative Manual Installation Methods
+### Pre-built Packages
 
-Pre-built packages are available for manual installation (See release page for packages):
+Download pre-compiled binaries from the **[Releases](https://github.com/m-uvex/loaf-fm/releases)** page.
 
-### 1. Standalone AppImage (Universal)
-
-Download the self-contained `.AppImage` and run it directly:
+#### AppImage (Universal)
 
 ```bash
-chmod +x Loaf-v0.1.0-x86_64.AppImage
-./Loaf-v0.1.0-x86_64.AppImage
+chmod +x Loaf-*.AppImage
+./Loaf-*.AppImage
+
 ```
 
-### 2. Debian and Debian-based (Ubuntu, Mint, etc.) (`.deb`)
+For SMB network shares, GVfs and its SMB backend must be installed on the host.
+The install script and native `.deb`, Arch, and RPM packages install these
+automatically; for a manually run AppImage, install `gvfs` plus `gvfs-smb`
+(Arch/Fedora), `gvfs-backends` (Debian/Ubuntu), or `gvfs-backend-samba`
+(openSUSE).
 
-Download the `.deb` package and install it using `apt` or `dpkg`:
+#### Debian / Ubuntu / Mint (`.deb`)
 
 ```bash
-# Using apt (Recommended):
-sudo apt install ./loaf_0.1.0_amd64.deb
+sudo apt install ./loaf_*_amd64.deb
 
-# Or using dpkg:
-sudo dpkg -i ./loaf_0.1.0_amd64.deb
-sudo apt-get install -f
 ```
 
-### 3. Arch and Arch-based (Manjaro, CachyOS, etc.) (`.pkg.tar.zst`)
+#### Arch / Manjaro / CachyOS
 
-Download the `.pkg.tar.zst` package and install it using `pacman`:
+Install from the AUR *(Community maintained)*:
 
 ```bash
-sudo pacman -U ./loaf-0.1.0-1-x86_64.pkg.tar.zst
+yay -S loaf-fm-bin
+# or
+paru -S loaf-fm-bin
+
 ```
 
-Or build from the included `PKGBUILD`:
+*Or install the downloaded package manually:*
 
 ```bash
-makepkg -si
+sudo pacman -U ./loaf-*.pkg.tar.zst
+
 ```
 
-### 4. Fedora / RHEL / openSUSE (`.rpm`)
-
-Download the `.rpm` package and install it using `dnf`:
+#### Fedora / RHEL / openSUSE (`.rpm`)
 
 ```bash
-sudo dnf install ./loaf-0.1.0-1.fc44.x86_64.rpm
+sudo dnf install ./loaf-*.rpm
+
 ```
 
-### 5. Using Nix / NixOS
+#### Nix / NixOS (Recommended, Tested)
 
-Run directly with flakes enabled:
+Run directly:
 
 ```bash
 nix run github:m-uvex/loaf-fm
+
 ```
 
-For a declarative installation, add to your `flake.nix`:
+Declarative setup via Flakes:
 
 ```nix
-loaf.url = "github:m-uvex/loaf-fm";
-```
-And add to your `configuration.nix`:
-```nix
-{ inputs, pkgs, ...}:
+# flake.nix
+inputs.loaf.url = "github:m-uvex/loaf-fm";
 
-{
-    nixpkgs.overlays = [ loaf.overlays.default ];
-
-    environment.systemPackages = [ pkgs.loaf ];
+# configuration.nix
+{ inputs, pkgs, ... }: {
+  nixpkgs.overlays = [ inputs.loaf.overlays.default ];
+  environment.systemPackages = [ pkgs.loaf ];
 }
+
 ```
-> [!NOTE]
-> We DO ~~not~~ support `home-manager`!
+
 ---
 
 ## Building from Source
 
-### Using Nix (Recommended)
+### Option A: Using Nix (Recommended)
 
-Loaf provides a complete Nix flake containing all Qt6 libraries and build dependencies:
+The dev shell provides all Qt6 dependencies and toolchains automatically:
 
 ```bash
-# Enter dev shell and run:
-nix develop --command cargo run
-
-# Compile an optimized release binary:
 nix develop --command cargo build --release
+
 ```
 
-### Manual Build
+### Option B: Manual Build
 
-Requirements:
-- Rust toolchain (1.75+) and a C++17 compiler
-- Qt 6.x development files (`qtbase` incl. private headers and QtDBus, `qtdeclarative`, `qtsvg`, `qtwayland`)
-  - Fedora: `sudo dnf install qt6-qtbase-devel qt6-qtbase-private-devel qt6-qtdeclarative-devel qt6-qtsvg-devel qt6-qtwayland-devel`
-- CMake, Ninja, and `pkg-config`
+#### 1. Dependencies
+
+* **Build tools:** Rust (1.75+), C++17 compiler, CMake, Ninja, `pkg-config`
+* **Qt6 libraries:** `qtbase` (including private headers and QtDBus), `qtdeclarative`, `qtsvg`, `qtwayland`
+* *Fedora:* `sudo dnf install qt6-qtbase-devel qt6-qtbase-private-devel qt6-qtdeclarative-devel qt6-qtsvg-devel qt6-qtwayland-devel`
+* *Debian/Ubuntu:* `sudo apt install qt6-base-dev qt6-base-private-dev qt6-declarative-dev libqt6svg6-dev qt6-wayland-dev`
+* *Arch:* `sudo pacman -S qt6-base qt6-declarative qt6-svg qt6-wayland`
+
+Qt Linguist tools (`lupdate`/`lrelease`) compile the `translations/*.ts` catalogues into the
+binary. The UI language follows the system locale, can be changed in Settings → Interface →
+Language, or overridden for one launch with `LOAF_LANG` (e.g. `LOAF_LANG=id_ID ./target/release/loaf`).
+
+Contributors: to regenerate the master catalogue, run
+`lupdate cpp qml translations/loaf_<locale>.ts`. Edit translations with Qt Linguist (`linguist`), compile them with
+`lrelease translations/loaf_<locale>.ts -qm loaf_<locale>.qm`, and list each locale in
+`qml/settings/languages.json` so the Language picker shows it.
 
 Optional at runtime (features degrade gracefully without them):
 - `7zip`/`p7zip` (zip, 7z, rar, iso, encrypted archives), `tar`, `zstd`, `cpio`
 - `udisks2` (mount, eject, unlock encrypted drives, rename labels)
+- `gvfs` and its SMB backend (`gvfs-smb` on Arch/Fedora, `gvfs-backends` on Debian/Ubuntu, `gvfs-backend-samba` on openSUSE) for SMB network shares when running a manually built binary
+- Optional MTP USB phone support: `kio-extras` package on Arch (`pacman -S kio-extras`), Debian/Ubuntu (`apt install kio-extras`), or `pkgs.kdePackages.kio-extras` on NixOS. This package provides the canonical session D-Bus service `org.kde.kmtpd5` (executed via `kio-extras-service`/`kiod6`) for USB phone browsing and read/write transfers. On NixOS, install it at the system level (`environment.systemPackages = [ pkgs.kdePackages.kio-extras ];` and `services.dbus.packages = [ pkgs.kdePackages.kio-extras ];`) so its D-Bus service is registered in the session activation registry, rather than merely in a transient `nix-shell`. A full KDE Plasma desktop environment or manually running daemon is not required (the host D-Bus session bus activates the service on demand across Hyprland, Sway, GNOME, etc., provided the service file is registered). When absent or unregistered, MTP devices degrade cleanly without affecting local disk browsing or causing UI hangs; KIOFuse is not required.
 - `ffmpegthumbnailer` / `evince-thumbnailer` (video and PDF thumbnails)
 - `xdg-utils`, `libsecret` (`secret-tool`, to remember drive passphrases), `polkit` (Open as Administrator)
+
+
+#### 2. Optional Runtime Dependencies
+
+Features degrade gracefully if these are not installed:
+
+* `kio-extras` – MTP USB phone support (requires session D-Bus registration)
+* `7zip` / `p7zip`, `tar`, `zstd` – Archive browsing and extraction
+* `udisks2` – Drive management, mounting, and passphrase unlocking
+* `ffmpegthumbnailer`, `evince-thumbnailer` – Video and PDF thumbnails
+* `polkit` – Admin file operations
+
+#### 3. Compile and Run
 
 ```bash
 cargo build --release
 ./target/release/loaf
-cargo test   # backend unit tests
+
 ```
 
-## Command Line
+---
 
-```text
+## Command Line Usage
+
+ ```text
 loaf [OPTIONS] [PATH...]
 
   PATH               Folder to open, or a file to show selected in its folder
   -p, --path <DIR>   Start in DIR
   -m, --mini         Start in the compact layout
       --new-window   Open a separate window instead of a tab in the running one
+      --class <NAME> Use NAME as the window class (Wayland app id / WM_CLASS)
+      --portal       Serve the xdg-desktop-portal file chooser (D-Bus activation)
   -v, --verbose      Print diagnostic messages
       --version      Print the version
   -h, --help         Print help
-```
+``` 
 
-Running `loaf <path>` while Loaf is open hands the path to the running window
-(as a new tab). Loaf also answers `org.freedesktop.FileManager1`, so "Show in
-folder" from browsers and other apps opens it.
+### Integration Notes
+
+* **Single-Instance IPC**: Running `loaf <path>` when an instance is already active attaches the path as a new tab by default.
+* **Desktop "Show in Folder"**: Registers as the default `org.freedesktop.FileManager1` D-Bus provider so browsers and external apps reveal files directly in Loaf.
+* **Window Rules**: Passing `--class <NAME>` spawns an isolated instance with a distinct identity, making it easy to configure floating, sizing, or workspace rules in Hyprland, Sway, or i3.
+* **System File Dialogs**: Running with `--portal` allows Loaf to replace generic system open/save file pickers. See [docs/portal.md](docs/portal.md) for details.
 
 ---
 
@@ -303,10 +328,10 @@ loaf/
 
 ## Contributing
 
-We welcome contributions of all kinds! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines on branch targets (`dev`), setting up your development environment with or without Nix, architecture overview, and testing instructions.
+We welcome contributions of all kinds! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines on branch targets (`main`), setting up your development environment with or without Nix, architecture overview, and testing instructions.
 
 ---
 
 ## License
 
-This project is licensed under the MIT License.
+This project is licensed under the MIT License. See [LICENSE](LICENSE) for the full license text and [THIRD-PARTY-LICENSES.md](THIRD-PARTY-LICENSES.md) for third-party notices and LGPL compliance details.

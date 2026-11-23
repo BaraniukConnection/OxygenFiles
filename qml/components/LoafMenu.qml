@@ -22,6 +22,14 @@ LoafPopup {
     property int highlightIndex: -1
     property var parentMenu: null
     property var currentSubmenu: null
+    property var pendingAction: null
+
+    function rootMenu() {
+        var m = menu;
+        while (m && m.parentMenu)
+            m = m.parentMenu;
+        return m;
+    }
 
     // Extra widgets appended below the model rows (View menu uses this) land in
     // contentHost via LoafPopup's inherited default property.
@@ -56,9 +64,16 @@ LoafPopup {
         menu.lastClosedTime = Date.now();
         menu.hideSubmenuNow();
         menu.resetRows();
+        if (typeof menu.pendingAction === "function") {
+            var act = menu.pendingAction;
+            menu.pendingAction = null;
+            try {
+                act();
+            } catch (e) {
+                console.warn("LoafMenu: action failed: " + e);
+            }
+        }
     }
-
-    // ---- width measurement --------------------------------------------------
 
     TextMetrics { id: tmLabel; font.pixelSize: theme.fs(13) }
     TextMetrics { id: tmShortcut; font.pixelSize: theme.fs(11) }
@@ -95,7 +110,20 @@ LoafPopup {
         return Math.min(menu.menuMaxWidth, Math.ceil(cw + 2 * menu.contentPadding));
     }
 
-    // ---- row animation ------------------------------------------------------
+    function computeHeight() {
+        var opts = menu.model;
+        var total = 2 * menu.contentPadding;
+        if (menu.headerBar && menu.headerBar.visible)
+            total += menu.headerBar.implicitHeight + 6;
+        if (!opts || opts.length === 0)
+            return total;
+        for (var i = 0; i < opts.length; ++i) {
+            total += 36;
+            if (opts[i] && opts[i].separatorBefore)
+                total += 11;
+        }
+        return Math.min(total, menu.maxMenuHeight);
+    }
 
     function animatableRows() {
         var out = [];
@@ -121,7 +149,7 @@ LoafPopup {
         var list = menu.animatableRows();
         for (var i = 0; i < list.length; i++) {
             var item = list[i];
-            var delay = i * 22;
+            var delay = Math.min(i * 18, 180);
             if (typeof item.playPop === "function")
                 item.playPop(delay);
             else if (typeof item.popIn === "function")
@@ -148,8 +176,6 @@ LoafPopup {
             list[i].reset();
     }
 
-    // ---- activation ---------------------------------------------------------
-
     function resolveSubmenu(entry) {
         if (!entry)
             return null;
@@ -172,10 +198,17 @@ LoafPopup {
         }
         // Close this menu and every parent first, then act: a dialog or an
         // inline editor opened by the action must not lose focus to a menu.
+        // Actions run once the menu finishes closing so Qt Quick's popup focus
+        // restoration cannot steal active focus from newly opened editors.
         var action = it.action;
+        var root = menu.rootMenu();
+        if (typeof action === "function") {
+            if (root && (root.opened || root.visible))
+                root.pendingAction = action;
+            else
+                action();
+        }
         menu.closeChain();
-        if (typeof action === "function")
-            action();
     }
 
     function closeChain() {
@@ -192,8 +225,6 @@ LoafPopup {
         rowsView.positionViewAtIndex(index, ListView.Contain);
         return rowsView.itemAtIndex(index);
     }
-
-    // ---- cascading submenus -------------------------------------------------
 
     function ensureSubmenu() {
         if (menu.currentSubmenu)
@@ -219,6 +250,10 @@ LoafPopup {
         obj.parentMenu = menu;
         if (parentItem)
             obj.parent = parentItem;
+        obj.closed.connect(function() {
+            if (!menu.contentHovered)
+                menu.highlightIndex = -1;
+        });
         menu.currentSubmenu = obj;
         return obj;
     }
@@ -234,7 +269,12 @@ LoafPopup {
             return;
         sm.model = submenuModel;
         sm.parentMenu = menu;
-        sm.openRightOf(anchorItem);
+        sm.openAdjacentTo(anchorItem, menu);
+        // The popup is already open when hopping between sibling submenus, so
+        // Popup.aboutToShow never fires and the new rows would appear frozen.
+        // Re-run the entrance curve after the delegates exist.
+        if (sm.opened)
+            Qt.callLater(function() { if (sm) sm.animateIn(); });
     }
 
     function openSubmenuAt(index) {
@@ -258,9 +298,9 @@ LoafPopup {
         hideTimer.stop();
         if (menu.currentSubmenu && menu.currentSubmenu.opened)
             menu.currentSubmenu.close();
+        if (!menu.contentHovered)
+            menu.highlightIndex = -1;
     }
-
-    // ---- keyboard -----------------------------------------------------------
 
     function isNestedMenu() {
         return menu.parentMenu !== null && menu.parentMenu !== undefined;
@@ -312,7 +352,25 @@ LoafPopup {
             menu.close();
     }
 
-    // ---- rows ---------------------------------------------------------------
+    // Optional header rendered above the rows (e.g. the scope pill in the
+    // View menu). Absent by default, then it takes no part in the layout.
+    property Item headerBar: null
+    property alias headerHostItem: headerHost
+
+    Item {
+        id: headerHost
+        Layout.fillWidth: true
+        visible: menu.headerBar !== null
+        Layout.preferredHeight: visible ? menu.headerBar.implicitHeight + 6 : 0
+        Component.onCompleted: {
+            if (!menu.headerBar)
+                return;
+            menu.headerBar.parent = headerHost;
+            menu.headerBar.anchors.left = headerHost.left;
+            menu.headerBar.anchors.right = headerHost.right;
+            menu.headerBar.anchors.verticalCenter = headerHost.verticalCenter;
+        }
+    }
 
     // Rows live in a ListView: only visible rows are created (an app list
     // can hold hundreds of entries) and it scrolls past maxMenuHeight.
@@ -327,6 +385,7 @@ LoafPopup {
         boundsBehavior: Flickable.StopAtBounds
         model: menu.model
         ScrollBar.vertical: ScrollBar { policy: rowsView.contentHeight > rowsView.height ? ScrollBar.AsNeeded : ScrollBar.AlwaysOff }
+        onContentHeightChanged: if (menu.opened) menu.reposition()
 
         delegate: ColumnLayout {
             id: rowWrap
@@ -349,7 +408,7 @@ LoafPopup {
                 Layout.bottomMargin: 5
                 Layout.leftMargin: 10
                 Layout.rightMargin: 10
-                color: theme.separator
+                color: theme.outlineAlpha(theme.separator)
                 visible: rowWrap.entry ? rowWrap.entry.separatorBefore === true : false
 
                 SequentialAnimation {
@@ -392,12 +451,18 @@ LoafPopup {
                 onTriggered: menu.activate(rowWrap.rowIndex)
                 onSubmenuHovered: menu.openSubmenuAt(rowWrap.rowIndex)
                 onHoveredChanged: {
-                    if (!row.hovered)
-                        return;
-                    if (row.hasSubmenu)
-                        menu.openSubmenuAt(rowWrap.rowIndex);
-                    else
-                        menu.hideSubmenuSoon();
+                    if (row.hovered) {
+                        menu.highlightIndex = rowWrap.rowIndex;
+                        if (row.hasSubmenu)
+                            menu.openSubmenuAt(rowWrap.rowIndex);
+                        else
+                            menu.hideSubmenuSoon();
+                    } else {
+                        if (!row.hasSubmenu || !menu.currentSubmenu || !menu.currentSubmenu.opened) {
+                            if (menu.highlightIndex === rowWrap.rowIndex)
+                                menu.highlightIndex = -1;
+                        }
+                    }
                 }
             }
         }

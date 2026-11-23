@@ -1,0 +1,333 @@
+import QtQuick
+import QtQuick.Layouts
+import app.loaf
+
+ColumnLayout {
+    id: root
+
+    property string searchQuery: ""
+
+    function matches(keywords) {
+        if (!searchQuery || searchQuery.trim().length === 0) return true;
+        var q = searchQuery.toLowerCase().trim();
+        var parts = q.split(/\s+/);
+        var kw = keywords.toLowerCase();
+        for (var i = 0; i < parts.length; ++i) {
+            if (parts[i].length > 0 && kw.indexOf(parts[i]) === -1) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    readonly property bool matchOpenDirs: matches("open folders directories navigation split view new tab current view")
+    readonly property bool matchArchives: matches("open archives zip tar 7z enter extract browse default app")
+    readonly property bool matchClickToOpen: matches("click to open single click double click behavior folder file")
+    readonly property bool matchRangeSelect: matches("ctrl shift control range select selection legacy standard anchor multiple")
+    readonly property bool matchDrag: matches("left click drag action selection box pan scroll view rubberband marquee mouse")
+    readonly property bool matchHidden: matches("show hidden files dot dotfiles folders")
+    readonly property bool matchDisambig: matches("disambiguate duplicate names parent folder prefix search")
+    readonly property bool matchRename: matches("click rename inline single click")
+    readonly property bool matchSearch: matches("search file contents text inside")
+    readonly property bool matchSession: matches("session restore tabs remember last folder window startup launch")
+    readonly property bool matchDefaultApps: matches("default apps applications folders directories text txt plain text png images image file type mime formats")
+
+    readonly property int matchCount: (searchQuery && searchQuery.trim().length > 0)
+        ? ((matchOpenDirs ? 1 : 0) + (matchArchives ? 1 : 0) + (matchClickToOpen ? 1 : 0) + (matchRangeSelect ? 1 : 0) + (matchDrag ? 1 : 0) + (matchHidden ? 1 : 0)
+            + (matchDisambig ? 1 : 0) + (matchRename ? 1 : 0) + (matchSearch ? 1 : 0) + (matchSession ? 1 : 0)
+            + (matchDefaultApps ? 1 : 0))
+        : 0
+
+    property var mimeTypeOptions: []
+    property var mimeAppOptions: []
+    property string selectedMimeType: ""
+    property string selectedMimeApp: ""
+
+    function loadAppOptions(mime) {
+        var apps = [];
+        try {
+            apps = JSON.parse(core.apps_for_mime(mime) || "[]");
+        } catch (e) {
+            console.warn("Could not load default applications for " + mime + ": " + e);
+        }
+        return apps.map(function(app) {
+            return { value: app.id, label: app.name, iconUrl: app.icon };
+        });
+    }
+
+    function selectMimeType(mime) {
+        selectedMimeType = mime;
+        mimeAppOptions = loadAppOptions(mime);
+        selectedMimeApp = core.default_app_for_mime(mime);
+    }
+
+    function loadDefaultAppSettings() {
+        if (typeof core === "undefined" || !core)
+            return;
+        try {
+            var types = JSON.parse(core.used_mime_types() || "[]");
+            mimeTypeOptions = types.map(function(type) {
+                return { value: type.mime, label: type.label };
+            });
+        } catch (e) {
+            console.warn("Could not load supported file types: " + e);
+            mimeTypeOptions = [];
+        }
+        if (mimeTypeOptions.length > 0)
+            selectMimeType(mimeTypeOptions[0].value);
+    }
+
+    function saveDefaultApp(appId) {
+        if (selectedMimeType.length > 0 && core.set_default_mime_app(selectedMimeType, appId))
+            selectedMimeApp = core.default_app_for_mime(selectedMimeType);
+    }
+
+    onVisibleChanged: if (visible) loadDefaultAppSettings()
+    Component.onCompleted: loadDefaultAppSettings()
+
+    Layout.fillWidth: true
+    spacing: 16
+
+    // Category 1: Browsing & Navigation
+    SettingCard {
+        visible: root.matchOpenDirs || root.matchArchives || root.matchClickToOpen || root.matchRangeSelect || root.matchDrag || root.matchHidden || root.matchDisambig
+        title: qsTr("Browsing & Navigation")
+        subtitle: qsTr("Folder opening mode, drag actions, and file visibility")
+        icon: "folder-notch-open"
+
+        SettingRow {
+            visible: root.matchOpenDirs
+            icon: "folder-open"
+            title: qsTr("Open folders in")
+            subtitle: qsTr("Where newly clicked directories should navigate")
+
+            LoafSegmented {
+                Layout.preferredWidth: (typeof settingsView !== "undefined" && settingsView.isCompact) ? 220 : 380
+                options: [
+                    { value: "current", label: qsTr("Current"), icon: "folder", shortLabel: qsTr("Current") },
+                    { value: "split", label: qsTr("Split"), icon: "columns", shortLabel: qsTr("Split") },
+                    //: Short label for New Tab in folder opening segment control. Must stay short.
+                    { value: "tab", label: qsTr("New Tab"), icon: "plus-square", shortLabel: qsTr("Tab") }
+                ]
+                value: theme.openFolderMode
+                onSelected: function(v) { theme.openFolderMode = v; }
+            }
+        }
+
+        SettingDivider { visible: root.matchOpenDirs && (root.matchArchives || root.matchClickToOpen || root.matchDrag || root.matchHidden || root.matchDisambig) }
+
+        SettingRow {
+            visible: root.matchClickToOpen
+            icon: "cursor-click"
+            title: qsTr("Click to open")
+            subtitle: qsTr("Choose whether a single click or a double click opens files and folders")
+
+            LoafSegmented {
+                Layout.preferredWidth: (typeof settingsView !== "undefined" && settingsView.isCompact) ? 220 : 380
+                options: [
+                    { value: "double", label: qsTr("Double-click"), shortLabel: qsTr("Double"), icon: "cursor-click" },
+                    { value: "single", label: qsTr("Single-click"), shortLabel: qsTr("Single"), icon: "cursor" }
+                ]
+                value: theme.clickToOpen
+                onSelected: function(v) { theme.clickToOpen = v; }
+            }
+        }
+
+        SettingDivider { visible: root.matchClickToOpen && root.matchRangeSelect }
+
+        SettingRow {
+            visible: root.matchRangeSelect
+            icon: "selection-plus"
+            title: qsTr("Ctrl+Shift selection")
+            subtitle: theme.rangeSelectMode === "legacy"
+                ? qsTr("Adds the range to what is already selected and continues from the clicked item")
+                : qsTr("Selects only the range from the first chosen item to the clicked one")
+
+            LoafSegmented {
+                Layout.preferredWidth: (typeof settingsView !== "undefined" && settingsView.isCompact) ? 220 : 380
+                options: [
+                    { value: "standard", label: qsTr("Standard"), shortLabel: qsTr("Standard") },
+                    { value: "legacy", label: qsTr("Legacy"), shortLabel: qsTr("Legacy") }
+                ]
+                value: theme.rangeSelectMode
+                onSelected: function(v) { theme.rangeSelectMode = v; }
+            }
+        }
+
+        SettingDivider { visible: (root.matchOpenDirs || root.matchClickToOpen) && (root.matchArchives || root.matchDrag || root.matchHidden || root.matchDisambig) }
+
+        SettingRow {
+            visible: root.matchArchives
+            icon: "archive"
+            title: qsTr("Open archives on Enter")
+            subtitle: qsTr("Choose whether pressing Enter or double-clicking an archive browses, extracts, or opens it")
+
+            LoafSegmented {
+                Layout.preferredWidth: (typeof settingsView !== "undefined" && settingsView.isCompact) ? 140 : 280
+                options: [
+                    { value: "browse", label: qsTr("Browse"), icon: "folder-open", shortLabel: "Browse" },
+                    { value: "extract", label: qsTr("Extract"), icon: "archive", shortLabel: "Extract" },
+                    { value: "open", label: qsTr("Default App"), icon: "arrow-square-out", shortLabel: "App" }
+                ]
+                value: theme.archiveOpenAction
+                onSelected: function(v) { theme.archiveOpenAction = v; }
+            }
+        }
+
+        SettingDivider { visible: (root.matchOpenDirs || root.matchClickToOpen || root.matchArchives) && (root.matchDrag || root.matchHidden || root.matchDisambig) }
+
+        SettingRow {
+            visible: root.matchDrag
+            icon: "cursor-click"
+            title: qsTr("Left-click drag action")
+            subtitle: qsTr("Choose whether dragging on empty space creates a selection box or pans the view")
+
+            LoafSegmented {
+                Layout.preferredWidth: (typeof settingsView !== "undefined" && settingsView.isCompact) ? 220 : 380
+                options: [
+                    { value: "select", label: qsTr("Selection Box"), icon: "bounding-box" },
+                    { value: "scroll", label: qsTr("Pan View"), icon: "hand-grabbing" }
+                ]
+                value: theme.dragAction
+                onSelected: function(v) { theme.dragAction = v; }
+            }
+        }
+
+        SettingDivider { visible: root.matchDrag && (root.matchHidden || root.matchDisambig) }
+
+        SettingRow {
+            visible: root.matchHidden
+            icon: "eye"
+            title: qsTr("Show hidden files")
+            subtitle: qsTr("Display files and folders prefixed with a dot (Ctrl+H)")
+
+            LoafSwitch {
+                id: hiddenSwitch
+                checked: typeof window !== "undefined" ? window.showHidden : false
+                onToggled: if (typeof window !== "undefined") window.toggleShowHidden()
+            }
+        }
+
+        SettingDivider { visible: root.matchHidden && root.matchDisambig }
+
+        SettingRow {
+            visible: root.matchDisambig
+            icon: "text-t"
+            title: qsTr("Disambiguate duplicate names")
+            subtitle: qsTr("Display parent directory prefixes for search results with identical names")
+
+            LoafSwitch {
+                id: disambigSwitch
+                checked: typeof core !== "undefined" && core ? core.get_setting("disambiguate_duplicates") !== "false" : true
+                onToggled: if (typeof core !== "undefined" && core) core.set_setting("disambiguate_duplicates", checked ? "true" : "false")
+            }
+        }
+    }
+
+    // Category 2: File Operations
+    SettingCard {
+        visible: root.matchRename || root.matchSearch
+        title: qsTr("File Operations")
+        subtitle: qsTr("Inline rename triggers and content search")
+        icon: "gear-six"
+
+        SettingRow {
+            visible: root.matchRename
+            icon: "pencil-simple-line"
+            title: qsTr("Click selected item to rename")
+            subtitle: qsTr("Clicking an already selected item triggers inline renaming (F2 always renames)")
+
+            LoafSwitch {
+                checked: theme.clickToRename
+                onToggled: function(c) { theme.clickToRename = c; }
+            }
+        }
+
+        SettingDivider { visible: root.matchRename && root.matchSearch }
+
+        SettingRow {
+            visible: root.matchSearch
+            icon: "file-text"
+            title: qsTr("Search inside file contents")
+            subtitle: qsTr("Match text inside text and code files in subfolder searches (indexed, slightly slower)")
+
+            LoafSwitch {
+                checked: theme.searchContents
+                onToggled: function(c) { theme.searchContents = c; }
+            }
+        }
+    }
+
+    // Category 3: Session
+    SettingCard {
+        visible: root.matchSession
+        title: qsTr("Session")
+        subtitle: qsTr("Window state and startup restoration")
+        icon: "clock-counter-clockwise"
+
+        SettingRow {
+            icon: "clock-counter-clockwise"
+            title: qsTr("Restore session on launch")
+            subtitle: qsTr("Automatically reopen tabs, visited folders, and split panes on startup")
+
+            LoafSwitch {
+                checked: typeof core !== "undefined" && core ? core.get_setting("restoreSession") !== "false" : true
+                onToggled: if (typeof core !== "undefined" && core) core.set_setting("restoreSession", checked ? "true" : "false")
+            }
+        }
+    }
+
+    SettingCard {
+        visible: root.matchDefaultApps
+        title: qsTr("Default Applications")
+        subtitle: qsTr("Choose a file type and the installed app that should open it")
+        icon: "app-window"
+
+        SettingRow {
+            visible: root.mimeTypeOptions.length > 0
+            icon: "file"
+            title: qsTr("File type")
+            subtitle: qsTr("Types you have opened in Loaf")
+
+            LoafSelect {
+                Layout.preferredWidth: (typeof settingsView !== "undefined" && settingsView.isCompact) ? 180 : 320
+                options: root.mimeTypeOptions
+                value: root.selectedMimeType
+                placeholder: qsTr("No supported file types")
+                enabled: root.mimeTypeOptions.length > 0
+                onSelected: function(mime) { root.selectMimeType(mime); }
+            }
+        }
+
+        SettingRow {
+            visible: root.mimeTypeOptions.length > 0
+            icon: "app-window"
+            title: qsTr("Application")
+            subtitle: qsTr("Default app for the selected file type")
+
+            LoafSelect {
+                Layout.preferredWidth: (typeof settingsView !== "undefined" && settingsView.isCompact) ? 180 : 320
+                options: root.mimeAppOptions
+                value: root.selectedMimeApp
+                placeholder: qsTr("Choose an app")
+                enabled: root.mimeAppOptions.length > 0
+                onSelected: function(id) { root.saveDefaultApp(id); }
+            }
+        }
+
+        SettingRow {
+            visible: root.mimeTypeOptions.length === 0
+            icon: "info"
+            title: qsTr("No file types yet")
+            subtitle: qsTr("Open a file in Loaf to add its type here")
+        }
+    }
+
+    Connections {
+        target: typeof engine !== "undefined" ? engine : null
+        function onShow_hiddenChanged() {
+            if (typeof window !== "undefined" && hiddenSwitch.checked !== window.showHidden)
+                hiddenSwitch.checked = window.showHidden
+        }
+    }
+}

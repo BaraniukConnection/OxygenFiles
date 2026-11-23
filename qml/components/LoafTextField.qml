@@ -1,8 +1,6 @@
 import QtQuick
 import QtQuick.Controls
 import app.loaf
-
-// Single-line text field in the theme's style.
 TextField {
     id: field
     color: theme.textMain
@@ -21,6 +19,6 @@ TextField {
         radius: theme.radiusS
         color: theme.surfaceContainerHighest
         border.width: field.activeFocus ? 2 : 1
-        border.color: field.activeFocus ? theme.primary : theme.borderSubtle
+        border.color: field.activeFocus ? theme.primary : theme.outlineAlpha(theme.borderSubtle)
     }
 }

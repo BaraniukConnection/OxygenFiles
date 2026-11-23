@@ -1,14 +1,26 @@
 pub mod apps;
 pub mod archive;
+// cxx-qt 0.10 generates a trampolining extern "C" wrapper for save_network_profile
+// with 10 parameters; rustc/clippy applies too_many_arguments to the module level
+// because item-level allow does not reach into macro-generated Qt bridge glue.
+#[allow(clippy::too_many_arguments)]
 pub mod core;
 pub mod drives;
 pub mod fsops;
 pub mod icons;
 pub mod info;
 pub mod listing;
+pub mod message;
+pub mod mtp;
+pub mod mtp_ops;
 pub mod native;
+pub mod network;
 pub mod pane;
+pub mod portal;
+pub mod portal_bridge;
 pub mod search;
+pub mod share;
+pub mod smb;
 pub mod state;
 pub mod theme;
 pub mod trash;
@@ -22,26 +34,58 @@ const HELP: &str = "Loaf - a Material 3 file manager
 
 Usage: loaf [OPTIONS] [PATH...]
 
-Opens each PATH (a folder, a file to show in its folder, or a file:// URI)
+Opens each PATH (a folder, a file to show in its folder, or a file:// URI or Loaf MTP address)
 in a tab. Without --new-window the paths are handed to a running Loaf.
 
 Options:
   -p, --path <DIR>   Start in DIR
   -m, --mini         Start in the compact (mini) layout
       --new-window   Always open a separate window
+      --class <NAME> Use NAME as the window class (Wayland app id / WM_CLASS)
+      --portal       Serve the xdg-desktop-portal file chooser (D-Bus
+                     activation): no main window until one is requested
   -v, --verbose      Print diagnostic messages
       --version      Print the version and exit
   -h, --help         Print this help and exit
 ";
 
+/// Window class (Wayland app id / WM_CLASS) used when `--class` is not given.
+const DEFAULT_CLASS: &str = "oxygen-files";
+
+pub(crate) fn env_language() -> Option<String> {
+    std::env::var("LOAF_LANG")
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+}
+
+pub(crate) fn resolve_language(env_value: Option<&str>, stored_value: Option<&str>) -> String {
+    let clean = |v: Option<&str>| {
+        v.map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_string)
+    };
+    clean(env_value)
+        .or_else(|| clean(stored_value))
+        .unwrap_or_default()
+}
+
 struct Args {
     paths: Vec<String>,
     mini: bool,
     new_window: bool,
+    portal: bool,
+    class: String,
 }
 
 fn parse_args() -> Result<Args, String> {
-    let mut out = Args { paths: Vec::new(), mini: false, new_window: false };
+    let mut out = Args {
+        paths: Vec::new(),
+        mini: false,
+        new_window: false,
+        portal: false,
+        class: DEFAULT_CLASS.to_string(),
+    };
     let mut it = std::env::args().skip(1);
     while let Some(a) = it.next() {
         match a.as_str() {
@@ -56,9 +100,19 @@ fn parse_args() -> Result<Args, String> {
             "-v" | "--verbose" => std::env::set_var("LOAF_VERBOSE", "1"),
             "-m" | "--mini" => out.mini = true,
             "--new-window" => out.new_window = true,
+            "--portal" => out.portal = true,
+            "--class" => {
+                let name = it.next().ok_or("--class needs a name")?;
+                if name.is_empty() {
+                    return Err("--class needs a name".to_string());
+                }
+                out.class = name;
+            }
             "-p" | "--path" => out.paths.push(it.next().ok_or("--path needs a folder")?),
             "--" => out.paths.extend(it.by_ref()),
-            s if s.starts_with('-') && s.len() > 1 => return Err(format!("unknown option '{}' (see --help)", s)),
+            s if s.starts_with('-') && s.len() > 1 => {
+                return Err(format!("unknown option '{}' (see --help)", s))
+            }
             s => out.paths.push(s.to_string()),
         }
     }
@@ -68,7 +122,7 @@ fn parse_args() -> Result<Args, String> {
         .paths
         .into_iter()
         .map(|p| {
-            if p.starts_with("file://") || p.starts_with('/') {
+            if p.starts_with("file://") || p.starts_with("mtp://") || p.starts_with('/') {
                 p
             } else {
                 cwd.join(p).to_string_lossy().to_string()
@@ -86,12 +140,25 @@ fn main() {
             std::process::exit(2);
         }
     };
+    native::ffi::set_application_identity(env!("CARGO_PKG_VERSION"), &args.class);
+    let env_lang = env_language();
+    let language = resolve_language(env_lang.as_deref(), state::get("language").as_deref());
+    native::set_application_language(&language);
     let mut app = QGuiApplication::new();
-    native::ffi::set_application_identity(env!("CARGO_PKG_VERSION"));
     let admin = std::env::var("LOAF_ADMIN").is_ok();
-    if !args.new_window && !admin {
-        let mode = if args.paths.is_empty() { "window" } else { "tab" };
-        if native::ffi::forward_to_running_instance(&args.paths, mode) {
+    // A custom window class is a distinct application identity: the running
+    // instance cannot provide it, so this process runs as its own instance.
+    let standalone = args.new_window || admin || args.class != DEFAULT_CLASS;
+    if !standalone {
+        // A portal handoff must not raise the running instance's window.
+        let (forward_paths, forward_mode) = if args.portal {
+            (Vec::new(), "portal")
+        } else if args.paths.is_empty() {
+            (Vec::new(), "window")
+        } else {
+            (args.paths.clone(), "tab")
+        };
+        if native::ffi::forward_to_running_instance(&forward_paths, forward_mode) {
             return;
         }
     }
@@ -100,17 +167,41 @@ fn main() {
         Ok(path) if !path.is_empty() => QUrl::from(&format!("file://{path}")),
         _ => QUrl::from("qrc:/qt/qml/app/loaf/qml/main.qml"),
     };
-    let mode = match (args.mini, args.new_window || admin) {
-        (true, true) => "mini,new-window",
-        (true, false) => "mini",
-        (false, true) => "tab,new-window",
-        (false, false) => "tab",
-    };
+    let mut modes = vec![if args.mini { "mini" } else { "tab" }];
+    if standalone {
+        modes.push("new-window");
+    }
+    if args.portal {
+        modes.push("portal");
+    }
+    let mode = modes.join(",");
     if let Some(mut engine) = engine.as_mut() {
-        native::ffi::setup_engine(engine.as_mut(), &args.paths, mode);
+        native::ffi::setup_engine(engine.as_mut(), &args.paths, &mode);
         engine.load(&url);
     }
     if let Some(app) = app.as_mut() {
         app.exec();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::resolve_language;
+
+    #[test]
+    fn environment_wins_over_stored_setting() {
+        assert_eq!(resolve_language(Some("id"), Some("de")), "id");
+    }
+
+    #[test]
+    fn stored_setting_used_without_environment() {
+        assert_eq!(resolve_language(None, Some("id_ID")), "id_ID");
+        assert_eq!(resolve_language(Some(""), Some("de")), "de");
+    }
+
+    #[test]
+    fn empty_means_system_default() {
+        assert_eq!(resolve_language(None, None), "");
+        assert_eq!(resolve_language(Some("  "), Some("   ")), "");
     }
 }
